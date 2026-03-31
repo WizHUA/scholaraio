@@ -35,7 +35,7 @@ Default: DeepSeek (`deepseek-chat`) via OpenAI-compatible protocol.
 ```yaml
 llm:
   model: deepseek-chat
-  base_url: https://api.deepseek.com/v1
+  base_url: https://api.deepseek.com
 ```
 
 ### Metadata Extraction

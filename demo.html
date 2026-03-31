@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ScholarAIO Demo Flow</title>
+  <style>
+    :root {
+      --bg: #f6f1e8;
+      --paper: #fffaf2;
+      --ink: #1d2727;
+      --muted: #5b6b69;
+      --line: rgba(29, 39, 39, 0.12);
+      --green: #486a54;
+      --orange: #bc6c39;
+      --blue: #3363b0;
+      --wine: #7d5567;
+      --gold: #9a7c2f;
+      --shadow: rgba(29, 39, 39, 0.10);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at top left, rgba(188, 108, 57, 0.12), transparent 24%),
+        radial-gradient(circle at top right, rgba(51, 99, 176, 0.10), transparent 26%),
+        linear-gradient(180deg, #f8f4ed 0%, var(--bg) 100%);
+      color: var(--ink);
+      font-family: "LXGW WenKai", "Noto Serif SC", "Source Han Serif SC", serif;
+    }
+
+    .wrap {
+      width: min(1500px, calc(100vw - 28px));
+      margin: 20px auto 40px;
+    }
+
+    .hero,
+    .section,
+    .card {
+      background: rgba(255, 250, 242, 0.94);
+      border: 1px solid var(--line);
+      box-shadow: 0 16px 42px var(--shadow);
+    }
+
+    .hero {
+      border-radius: 28px;
+      padding: 28px 30px 24px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      bottom: -60px;
+      width: 240px;
+      height: 240px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(72, 106, 84, 0.16), transparent 65%);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(30px, 4vw, 50px);
+      line-height: 1.08;
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 1040px;
+      font-size: 17px;
+      line-height: 1.8;
+      color: var(--muted);
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .chip {
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.58);
+      font-size: 14px;
+    }
+
+    .section {
+      margin-top: 18px;
+      border-radius: 24px;
+      padding: 18px;
+    }
+
+    .section h2 {
+      margin: 0 0 12px;
+      font-size: 24px;
+    }
+
+    svg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .card {
+      border-radius: 20px;
+      padding: 18px;
+    }
+
+    .card h3 {
+      margin: 0 0 10px;
+      font-size: 19px;
+    }
+
+    .card p,
+    .card li {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.75;
+    }
+
+    .card ul,
+    .card ol {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.6);
+      border: 1px solid var(--line);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .footer {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.8;
+      padding: 0 4px;
+    }
+
+    @media (max-width: 1080px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero,
+      .section,
+      .card {
+        border-radius: 18px;
+      }
+
+      .wrap {
+        width: min(100vw - 16px, 1500px);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>ScholarAIO 使用流 Demo</h1>
+      <p class="subtitle">
+        这张图把 ScholarAIO 当成一个完整系统来看：用户可以从 Claude Code、CLI、MCP 客户端等不同入口进入，发起搜索、读论文、入库、写作、主题分析等任务；任务会经过 skill / 命令 / MCP tool 这一层，再流入 Python 核心模块，最终落到知识库、索引和工作区数据上。
+      </p>
+      <div class="chips">
+        <span class="chip">入口层：Claude Code / CLI / MCP</span>
+        <span class="chip">中间层：Skill / CLI 子命令 / MCP Tools</span>
+        <span class="chip">能力层：pipeline / loader / index / vectors / topics</span>
+        <span class="chip">数据层：papers / index.db / topic_model / workspace</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>一、全局流动图</h2>
+      <div class="legend">
+        <span><i class="dot" style="background:#486a54"></i> 用户入口</span>
+        <span><i class="dot" style="background:#bc6c39"></i> 编排层</span>
+        <span><i class="dot" style="background:#3363b0"></i> Python 核心模块</span>
+        <span><i class="dot" style="background:#7d5567"></i> 数据/索引落点</span>
+        <span><i class="dot" style="background:#9a7c2f"></i> LLM / Embedding / MinerU 外部能力</span>
+      </div>
+      <svg viewBox="0 0 1440 1140" role="img" aria-label="ScholarAIO 全局架构流动图">
+        <defs>
+          <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="rgba(29,39,39,0.14)"/>
+          </filter>
+          <marker id="arrGreen" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+            <path d="M0,0 L12,6 L0,12 z" fill="#486a54"></path>
+          </marker>
+          <marker id="arrOrange" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+            <path d="M0,0 L12,6 L0,12 z" fill="#bc6c39"></path>
+          </marker>
+          <marker id="arrBlue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+            <path d="M0,0 L12,6 L0,12 z" fill="#3363b0"></path>
+          </marker>
+          <marker id="arrWine" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+            <path d="M0,0 L12,6 L0,12 z" fill="#7d5567"></path>
+          </marker>
+          <marker id="arrGold" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+            <path d="M0,0 L12,6 L0,12 z" fill="#9a7c2f"></path>
+          </marker>
+        </defs>
+
+        <rect x="16" y="16" width="1408" height="1108" rx="28" fill="#fffaf2" stroke="rgba(29,39,39,0.10)"/>
+
+        <text x="720" y="56" text-anchor="middle" font-size="30" font-weight="700" fill="#1d2727">从用户操作到系统落盘的完整流动</text>
+        <text x="720" y="84" text-anchor="middle" font-size="14" fill="#5b6b69">一张图覆盖 Claude Code 对话、CLI 命令、MCP 调用、skills、模块和外部能力</text>
+
+        <rect x="56" y="118" width="1328" height="158" rx="24" fill="rgba(72,106,84,0.07)" stroke="rgba(72,106,84,0.35)"/>
+        <text x="108" y="154" font-size="24" font-weight="700" fill="#486a54">A. 用户入口层</text>
+
+        <g filter="url(#shadow)">
+          <rect x="92" y="178" width="292" height="70" rx="16" fill="#f4fbf6" stroke="#486a54"/>
+          <text x="238" y="205" text-anchor="middle" font-size="20" font-weight="700">Claude Code 对话</text>
+          <text x="238" y="228" text-anchor="middle" font-size="14" fill="#5b6b69">自然语言任务：检索 / 阅读 / 写作 / 组织工作区</text>
+
+          <rect x="430" y="178" width="292" height="70" rx="16" fill="#f4fbf6" stroke="#486a54"/>
+          <text x="576" y="205" text-anchor="middle" font-size="20" font-weight="700">CLI 命令</text>
+          <text x="576" y="228" text-anchor="middle" font-size="14" fill="#5b6b69">scholaraio search / show / pipeline / topics</text>
+
+          <rect x="768" y="178" width="292" height="70" rx="16" fill="#f4fbf6" stroke="#486a54"/>
+          <text x="914" y="205" text-anchor="middle" font-size="20" font-weight="700">MCP 客户端</text>
+          <text x="914" y="228" text-anchor="middle" font-size="14" fill="#5b6b69">Claude Desktop / Cursor / 其他 MCP 客户端</text>
+
+          <rect x="1106" y="178" width="242" height="70" rx="16" fill="#f4fbf6" stroke="#486a54"/>
+          <text x="1227" y="205" text-anchor="middle" font-size="20" font-weight="700">插件模式</text>
+          <text x="1227" y="228" text-anchor="middle" font-size="14" fill="#5b6b69">/plugin install 后自动初始化</text>
+        </g>
+
+        <rect x="56" y="314" width="1328" height="210" rx="24" fill="rgba(188,108,57,0.07)" stroke="rgba(188,108,57,0.35)"/>
+        <text x="108" y="350" font-size="24" font-weight="700" fill="#bc6c39">B. 编排层：不同入口如何落到可执行动作</text>
+
+        <g filter="url(#shadow)">
+          <rect x="92" y="378" width="392" height="114" rx="18" fill="#fff7f1" stroke="#bc6c39"/>
+          <text x="288" y="407" text-anchor="middle" font-size="20" font-weight="700">Claude Code 场景</text>
+          <text x="288" y="432" text-anchor="middle" font-size="14" fill="#5b6b69">先根据描述匹配 skill</text>
+          <text x="288" y="454" text-anchor="middle" font-size="14" fill="#5b6b69">例如 search / show / ingest / workspace / literature-review</text>
+          <text x="288" y="476" text-anchor="middle" font-size="14" fill="#5b6b69">skill 再指导 agent 调 CLI、读文件、组织输出</text>
+
+          <rect x="524" y="378" width="392" height="114" rx="18" fill="#fff7f1" stroke="#bc6c39"/>
+          <text x="720" y="407" text-anchor="middle" font-size="20" font-weight="700">CLI 场景</text>
+          <text x="720" y="432" text-anchor="middle" font-size="14" fill="#5b6b69">命令行参数直接进入 cli.py</text>
+          <text x="720" y="454" text-anchor="middle" font-size="14" fill="#5b6b69">解析子命令后分发到对应模块</text>
+          <text x="720" y="476" text-anchor="middle" font-size="14" fill="#5b6b69">最适合排障、调试、批处理</text>
+
+          <rect x="956" y="378" width="392" height="114" rx="18" fill="#fff7f1" stroke="#bc6c39"/>
+          <text x="1152" y="407" text-anchor="middle" font-size="20" font-weight="700">MCP 场景</text>
+          <text x="1152" y="432" text-anchor="middle" font-size="14" fill="#5b6b69">客户端通过 MCP 调 scholaraio-mcp</text>
+          <text x="1152" y="454" text-anchor="middle" font-size="14" fill="#5b6b69">mcp_server.py 暴露 31 个 tool</text>
+          <text x="1152" y="476" text-anchor="middle" font-size="14" fill="#5b6b69">工具内部依旧调用同一套 Python 核心模块</text>
+        </g>
+
+        <rect x="56" y="562" width="1328" height="232" rx="24" fill="rgba(51,99,176,0.07)" stroke="rgba(51,99,176,0.34)"/>
+        <text x="108" y="598" font-size="24" font-weight="700" fill="#3363b0">C. Python 核心能力层</text>
+
+        <g filter="url(#shadow)">
+          <rect x="92" y="628" width="242" height="126" rx="18" fill="#f3f7ff" stroke="#3363b0"/>
+          <text x="213" y="657" text-anchor="middle" font-size="19" font-weight="700">config.py / setup.py</text>
+          <text x="213" y="682" text-anchor="middle" font-size="14" fill="#5b6b69">读取配置、环境检查</text>
+          <text x="213" y="704" text-anchor="middle" font-size="14" fill="#5b6b69">定位 config.yaml / config.local.yaml</text>
+          <text x="213" y="726" text-anchor="middle" font-size="14" fill="#5b6b69">确保目录存在</text>
+
+          <rect x="362" y="628" width="242" height="126" rx="18" fill="#f3f7ff" stroke="#3363b0"/>
+          <text x="483" y="657" text-anchor="middle" font-size="19" font-weight="700">pipeline / ingest</text>
+          <text x="483" y="682" text-anchor="middle" font-size="14" fill="#5b6b69">PDF -> MD -> extract -> dedup</text>
+          <text x="483" y="704" text-anchor="middle" font-size="14" fill="#5b6b69">写入 papers / pending</text>
+          <text x="483" y="726" text-anchor="middle" font-size="14" fill="#5b6b69">并触发 embed / index</text>
+
+          <rect x="632" y="628" width="242" height="126" rx="18" fill="#f3f7ff" stroke="#3363b0"/>
+          <text x="753" y="657" text-anchor="middle" font-size="19" font-weight="700">loader / index</text>
+          <text x="753" y="682" text-anchor="middle" font-size="14" fill="#5b6b69">L1-L4 分层阅读</text>
+          <text x="753" y="704" text-anchor="middle" font-size="14" fill="#5b6b69">FTS5 关键词检索 / 引用图谱</text>
+          <text x="753" y="726" text-anchor="middle" font-size="14" fill="#5b6b69">show / search / refs / citing</text>
+
+          <rect x="902" y="628" width="242" height="126" rx="18" fill="#f3f7ff" stroke="#3363b0"/>
+          <text x="1023" y="657" text-anchor="middle" font-size="19" font-weight="700">vectors / topics</text>
+          <text x="1023" y="682" text-anchor="middle" font-size="14" fill="#5b6b69">embedding、FAISS、vsearch</text>
+          <text x="1023" y="704" text-anchor="middle" font-size="14" fill="#5b6b69">BERTopic、topic viz</text>
+          <text x="1023" y="726" text-anchor="middle" font-size="14" fill="#5b6b69">支持语义检索和主题发现</text>
+
+          <rect x="1172" y="628" width="176" height="126" rx="18" fill="#f3f7ff" stroke="#3363b0"/>
+          <text x="1260" y="657" text-anchor="middle" font-size="19" font-weight="700">workspace / export</text>
+          <text x="1260" y="682" text-anchor="middle" font-size="14" fill="#5b6b69">子集组织</text>
+          <text x="1260" y="704" text-anchor="middle" font-size="14" fill="#5b6b69">BibTeX 导出</text>
+          <text x="1260" y="726" text-anchor="middle" font-size="14" fill="#5b6b69">写作工作流</text>
+        </g>
+
+        <rect x="56" y="832" width="1328" height="260" rx="24" fill="rgba(125,85,103,0.07)" stroke="rgba(125,85,103,0.34)"/>
+        <text x="108" y="868" font-size="24" font-weight="700" fill="#7d5567">D. 数据落点与外部能力</text>
+
+        <g filter="url(#shadow)">
+          <rect x="92" y="900" width="274" height="150" rx="18" fill="#fff7fb" stroke="#7d5567"/>
+          <text x="229" y="930" text-anchor="middle" font-size="19" font-weight="700">知识库数据</text>
+          <text x="229" y="956" text-anchor="middle" font-size="14" fill="#5b6b69">data/papers/&lt;Author-Year-Title&gt;</text>
+          <text x="229" y="978" text-anchor="middle" font-size="14" fill="#5b6b69">meta.json / paper.md / notes.md / images</text>
+          <text x="229" y="1000" text-anchor="middle" font-size="14" fill="#5b6b69">这是所有检索和写作的基础资产</text>
+
+          <rect x="396" y="900" width="274" height="150" rx="18" fill="#fff7fb" stroke="#7d5567"/>
+          <text x="533" y="930" text-anchor="middle" font-size="19" font-weight="700">索引与模型</text>
+          <text x="533" y="956" text-anchor="middle" font-size="14" fill="#5b6b69">data/index.db / paper_vectors / citations</text>
+          <text x="533" y="978" text-anchor="middle" font-size="14" fill="#5b6b69">faiss.index / topic_model / explore.db</text>
+          <text x="533" y="1000" text-anchor="middle" font-size="14" fill="#5b6b69">让搜索、语义检索、主题分析变快</text>
+
+          <rect x="700" y="900" width="274" height="150" rx="18" fill="#fff7fb" stroke="#7d5567"/>
+          <text x="837" y="930" text-anchor="middle" font-size="19" font-weight="700">工作区输出</text>
+          <text x="837" y="956" text-anchor="middle" font-size="14" fill="#5b6b69">workspace/&lt;name&gt;/papers.json</text>
+          <text x="837" y="978" text-anchor="middle" font-size="14" fill="#5b6b69">写作草稿、综述、导出文件</text>
+          <text x="837" y="1000" text-anchor="middle" font-size="14" fill="#5b6b69">面向用户项目组织，不污染源码目录</text>
+
+          <rect x="1004" y="900" width="344" height="150" rx="18" fill="#fffaf1" stroke="#9a7c2f"/>
+          <text x="1176" y="930" text-anchor="middle" font-size="19" font-weight="700">外部能力与依赖</text>
+          <text x="1176" y="956" text-anchor="middle" font-size="14" fill="#5b6b69">LLM：提取 / 富化 / 判断</text>
+          <text x="1176" y="978" text-anchor="middle" font-size="14" fill="#5b6b69">Embedding：语义检索 / topics</text>
+          <text x="1176" y="1000" text-anchor="middle" font-size="14" fill="#5b6b69">MinerU：PDF -> Markdown；OpenAlex / Crossref / S2：外部数据</text>
+        </g>
+
+        <g>
+          <path d="M238 248 C238 314, 238 320, 238 378" fill="none" stroke="#486a54" stroke-width="3" marker-end="url(#arrGreen)"/>
+          <path d="M576 248 C576 314, 720 320, 720 378" fill="none" stroke="#486a54" stroke-width="3" marker-end="url(#arrGreen)"/>
+          <path d="M914 248 C914 314, 1110 320, 1110 378" fill="none" stroke="#486a54" stroke-width="3" marker-end="url(#arrGreen)"/>
+          <path d="M1227 248 C1227 314, 1180 320, 1180 378" fill="none" stroke="#486a54" stroke-width="3" marker-end="url(#arrGreen)"/>
+
+          <path d="M288 492 C288 560, 213 570, 213 628" fill="none" stroke="#bc6c39" stroke-width="3" marker-end="url(#arrOrange)"/>
+          <path d="M288 492 C288 560, 483 570, 483 628" fill="none" stroke="#bc6c39" stroke-width="3" marker-end="url(#arrOrange)"/>
+          <path d="M288 492 C288 560, 753 570, 753 628" fill="none" stroke="#bc6c39" stroke-width="3" marker-end="url(#arrOrange)"/>
+
+          <path d="M720 492 C720 560, 753 570, 753 628" fill="none" stroke="#bc6c39" stroke-width="3" marker-end="url(#arrOrange)"/>
+          <path d="M720 492 C720 560, 1023 570, 1023 628" fill="none" stroke="#bc6c39" stroke-width="3" marker-end="url(#arrOrange)"/>
+
+          <path d="M1152 492 C1152 560, 1023 570, 1023 628" fill="none" stroke="#bc6c39" stroke-width="3" marker-end="url(#arrOrange)"/>
+          <path d="M1152 492 C1152 560, 1260 570, 1260 628" fill="none" stroke="#bc6c39" stroke-width="3" marker-end="url(#arrOrange)"/>
+
+          <path d="M483 754 C483 832, 229 848, 229 900" fill="none" stroke="#3363b0" stroke-width="3" marker-end="url(#arrBlue)"/>
+          <path d="M753 754 C753 832, 533 848, 533 900" fill="none" stroke="#3363b0" stroke-width="3" marker-end="url(#arrBlue)"/>
+          <path d="M1023 754 C1023 832, 533 848, 533 900" fill="none" stroke="#3363b0" stroke-width="3" marker-end="url(#arrBlue)"/>
+          <path d="M1260 754 C1260 832, 837 848, 837 900" fill="none" stroke="#3363b0" stroke-width="3" marker-end="url(#arrBlue)"/>
+
+          <path d="M1023 754 C1023 832, 1176 848, 1176 900" fill="none" stroke="#9a7c2f" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrGold)"/>
+          <path d="M483 754 C483 832, 1176 848, 1176 900" fill="none" stroke="#9a7c2f" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrGold)"/>
+          <path d="M213 754 C213 832, 1176 848, 1176 900" fill="none" stroke="#9a7c2f" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrGold)"/>
+        </g>
+      </svg>
+    </section>
+
+    <section class="section">
+      <h2>二、按场景看的 6 条 Demo 流</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>场景 1：Claude Code 里“帮我找相关论文”</h3>
+          <ol>
+            <li>用户在 Claude Code 输入自然语言请求。</li>
+            <li>Agent 根据描述匹配 search skill。</li>
+            <li>Skill 引导调用 search / vsearch / usearch。</li>
+            <li>底层流向 index.py 或 vectors.py。</li>
+            <li>返回论文列表，再由 agent 组织成对话回复。</li>
+          </ol>
+        </article>
+
+        <article class="card">
+          <h3>场景 2：CLI 里直接检索</h3>
+          <ol>
+            <li>用户执行 scholaraio search 或 vsearch。</li>
+            <li>cli.py 解析参数。</li>
+            <li>search 走 SQLite FTS5；vsearch 走 embedding + FAISS。</li>
+            <li>命中结果后直接打印到终端。</li>
+          </ol>
+        </article>
+
+        <article class="card">
+          <h3>场景 3：把 PDF 入库</h3>
+          <ol>
+            <li>用户把 PDF 放入 data/inbox。</li>
+            <li>执行 scholaraio pipeline ingest 或通过 ingest skill 触发。</li>
+            <li>pipeline 调 MinerU，把 PDF 转成 Markdown。</li>
+            <li>extractor / metadata 用 regex + LLM + API 富化元数据。</li>
+            <li>dedup 后写入 data/papers，再更新 index / embed。</li>
+          </ol>
+        </article>
+
+        <article class="card">
+          <h3>场景 4：读论文某一层内容</h3>
+          <ol>
+            <li>用户说“给我看这篇论文摘要/结论/全文”。</li>
+            <li>show skill 或 CLI show 命令命中 loader.py。</li>
+            <li>loader 根据 layer 读取 meta.json 或 paper.md。</li>
+            <li>L1-L4 渐进返回，避免一开始灌全文。</li>
+          </ol>
+        </article>
+
+        <article class="card">
+          <h3>场景 5：做主题分析或研究综述</h3>
+          <ol>
+            <li>用户要求“分析主题分布”或“帮我写综述”。</li>
+            <li>topics / literature-review / workspace skill 参与编排。</li>
+            <li>topics.py 复用已有 embeddings 做 BERTopic。</li>
+            <li>workspace 缩小论文集合，再交给写作 skill 组织输出。</li>
+          </ol>
+        </article>
+
+        <article class="card">
+          <h3>场景 6：MCP 客户端调用</h3>
+          <ol>
+            <li>外部客户端通过 MCP 请求 tool。</li>
+            <li>mcp_server.py 中对应工具接收参数。</li>
+            <li>工具内部调用同一套 Python 核心模块。</li>
+            <li>返回结构化 JSON 给客户端，再由客户端展示。</li>
+          </ol>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>三、最容易混淆的三个点</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>Skill 不是能力本体</h3>
+          <p>Skill 更像工作流说明书。它告诉 agent 什么时候该调用 search、show、pipeline、workspace，但真正的实现仍然在 Python 模块和 CLI / MCP 层。</p>
+        </article>
+
+        <article class="card">
+          <h3>MCP 不是另一套业务逻辑</h3>
+          <p>MCP 只是把已有能力打包成标准 tools 给外部客户端用。CLI 跑得通，MCP 才容易稳定；CLI 没跑通，MCP 只会换个入口报错。</p>
+        </article>
+
+        <article class="card">
+          <h3>LLM / Embedding / MinerU 分工不同</h3>
+          <p>LLM 负责提取、判断、富化；Embedding 负责语义检索和主题建模；MinerU 负责 PDF 转 Markdown。三者都是外部能力，但职责完全不同。</p>
+        </article>
+      </div>
+    </section>
+
+    <div class="footer">
+      这份 demo 更适合先建立全局认知，再回去对照 README、CLAUDE.md、explain.html 和 explain.md。若你需要，我下一步可以继续补一版“时序图风格”的 demo，把一个具体请求从用户输入到 index.db / paper.md 落盘的每一步画得更细。
+    </div>
+  </div>
+</body>
+</html>

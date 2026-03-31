@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ScholarAIO 配置路线图</title>
+  <style>
+    :root {
+      --bg: #f5f1e8;
+      --panel: #fffaf0;
+      --ink: #172121;
+      --muted: #4b5d5a;
+      --line: #35524a;
+      --accent: #c26d3a;
+      --accent-2: #6a8d73;
+      --accent-3: #2b59c3;
+      --accent-4: #7a4b8e;
+      --shadow: rgba(23, 33, 33, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "LXGW WenKai", "Noto Serif SC", "Source Han Serif SC", serif;
+      background:
+        radial-gradient(circle at top left, rgba(194, 109, 58, 0.14), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(43, 89, 195, 0.12), transparent 30%),
+        linear-gradient(180deg, #f7f3eb 0%, var(--bg) 100%);
+      font-family: "LXGW WenKai", "Noto Serif SC", "Source Han Serif SC", serif;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(184, 102, 47, 0.14), transparent 24%),
+        radial-gradient(circle at 100% 0%, rgba(47, 94, 168, 0.12), transparent 26%),
+        linear-gradient(180deg, #f7f3ec 0%, var(--bg) 100%);
+    }
+
+    .wrap {
+      width: min(1440px, calc(100vw - 32px));
+      margin: 24px auto 40px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, rgba(255, 250, 240, 0.94), rgba(248, 242, 232, 0.94));
+      border: 1px solid rgba(53, 82, 74, 0.18);
+      border-radius: 28px;
+      padding: 28px 30px 22px;
+      box-shadow: 0 18px 50px var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -60px -60px auto;
+      width: 240px;
+      height: 240px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(194, 109, 58, 0.16), transparent 65%);
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(30px, 4vw, 48px);
+      line-height: 1.1;
+      letter-spacing: 0.02em;
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 980px;
+      font-size: 17px;
+      line-height: 1.75;
+      color: var(--muted);
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .chip {
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: rgba(53, 82, 74, 0.08);
+      border: 1px solid rgba(53, 82, 74, 0.14);
+      font-size: 14px;
+      color: var(--ink);
+    }
+
+    .panel {
+      margin-top: 20px;
+      background: rgba(255, 250, 240, 0.9);
+      border: 1px solid rgba(53, 82, 74, 0.18);
+      border-radius: 24px;
+      padding: 18px;
+      box-shadow: 0 16px 42px var(--shadow);
+    }
+
+    svg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .notes {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid rgba(53, 82, 74, 0.16);
+      border-radius: 18px;
+      padding: 16px 18px;
+      box-shadow: 0 10px 26px rgba(23, 33, 33, 0.08);
+    }
+
+    .card h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    .card ol,
+    .card ul {
+      margin: 0;
+      padding-left: 20px;
+      line-height: 1.7;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .footer {
+      margin-top: 18px;
+      padding: 16px 18px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.8;
+    }
+
+    @media (max-width: 980px) {
+      .notes {
+        grid-template-columns: 1fr;
+      }
+
+      .wrap {
+        width: min(100vw - 20px, 1440px);
+        margin-top: 10px;
+      }
+
+      .hero,
+      .panel {
+        border-radius: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>ScholarAIO 配置路线图</h1>
+      <p class="subtitle">
+        这份页面从使用者视角出发，回答的是“我应该按什么顺序把这个项目配起来”。重点不是源码机制，而是：
+        先用独立 Conda 环境把项目跑通，再配置 LLM、MinerU、本地嵌入和最小数据闭环，最后再理解 MCP 为何只是外部接入层。
+      </p>
+      <div class="chips">
+        <span class="chip">推荐主线：Conda 独立环境</span>
+        <span class="chip">LLM：cc switch 与项目配置分开管理</span>
+        <span class="chip">PDF：本地 MinerU 优先，云 API 兜底</span>
+        <span class="chip">先 CLI，后 MCP</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>一、推荐配置顺序图</h2>
+      <svg viewBox="0 0 1320 1080" role="img" aria-label="ScholarAIO 推荐配置顺序图">
+        <defs>
+          <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="rgba(31,42,42,0.14)"/>
+          </filter>
+          <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+            <path d="M0,0 L12,6 L0,12 z" fill="#40634f"></path>
+          </marker>
+          <marker id="arrowBlue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+            <path d="M0,0 L12,6 L0,12 z" fill="#2f5ea8"></path>
+          </marker>
+          <marker id="arrowOrange" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+            <path d="M0,0 L12,6 L0,12 z" fill="#b8662f"></path>
+          </marker>
+        </defs>
+
+        <rect x="14" y="14" width="1292" height="1052" rx="26" fill="#fffaf2" stroke="rgba(31,42,42,0.10)"/>
+
+        <text x="660" y="54" text-anchor="middle" font-size="30" font-weight="700" fill="#1f2a2a">从零到可用的 8 步路线</text>
+        <text x="660" y="82" text-anchor="middle" font-size="14" fill="#596b68">先建立稳定环境，再打开功能开关，最后再追求高级能力</text>
+
+        <g filter="url(#shadow)">
+          <rect x="78" y="128" width="360" height="112" rx="18" fill="#f3fbf5" stroke="#40634f"/>
+          <text x="258" y="157" text-anchor="middle" font-size="20" font-weight="700">1. 建独立 Conda 环境</text>
+          <text x="258" y="184" text-anchor="middle" font-size="14" fill="#596b68">建议 Python 3.11，不混已有科研环境</text>
+          <text x="258" y="208" text-anchor="middle" font-size="14" fill="#596b68">目标：先稳定，再谈性能和扩展</text>
+
+          <rect x="470" y="128" width="360" height="112" rx="18" fill="#fef5ee" stroke="#b8662f"/>
+          <text x="650" y="157" text-anchor="middle" font-size="20" font-weight="700">2. 在源码仓库安装</text>
+          <text x="650" y="184" text-anchor="middle" font-size="14" fill="#596b68">pip install -e ".[full]"</text>
+          <text x="650" y="208" text-anchor="middle" font-size="14" fill="#596b68">你当前是本地开发模式，不是插件模式</text>
+
+          <rect x="862" y="128" width="360" height="112" rx="18" fill="#eef4ff" stroke="#2f5ea8"/>
+          <text x="1042" y="157" text-anchor="middle" font-size="20" font-weight="700">3. 初始化配置文件</text>
+          <text x="1042" y="184" text-anchor="middle" font-size="14" fill="#596b68">config.yaml 管公共参数</text>
+          <text x="1042" y="208" text-anchor="middle" font-size="14" fill="#596b68">config.local.yaml 管 key 与敏感信息</text>
+
+          <rect x="78" y="302" width="360" height="112" rx="18" fill="#eef4ff" stroke="#2f5ea8"/>
+          <text x="258" y="331" text-anchor="middle" font-size="20" font-weight="700">4. 先跑 setup check</text>
+          <text x="258" y="358" text-anchor="middle" font-size="14" fill="#596b68">这是你的第一诊断命令</text>
+          <text x="258" y="382" text-anchor="middle" font-size="14" fill="#596b68">检查依赖、目录、LLM key、MinerU 状态</text>
+
+          <rect x="470" y="302" width="360" height="112" rx="18" fill="#fef6fb" stroke="#7d4b63"/>
+          <text x="650" y="331" text-anchor="middle" font-size="20" font-weight="700">5. 配 LLM API</text>
+          <text x="650" y="358" text-anchor="middle" font-size="14" fill="#596b68">cc switch 管 Claude Code 主模型</text>
+          <text x="650" y="382" text-anchor="middle" font-size="14" fill="#596b68">ScholarAIO 自己在 config.local.yaml 读 key</text>
+
+          <rect x="862" y="302" width="360" height="112" rx="18" fill="#fef5ee" stroke="#b8662f"/>
+          <text x="1042" y="331" text-anchor="middle" font-size="20" font-weight="700">6. 配 PDF 转换链路</text>
+          <text x="1042" y="358" text-anchor="middle" font-size="14" fill="#596b68">本地 MinerU 优先</text>
+          <text x="1042" y="382" text-anchor="middle" font-size="14" fill="#596b68">云 API key 放 config.local.yaml 做 fallback</text>
+
+          <rect x="274" y="476" width="360" height="112" rx="18" fill="#f3fbf5" stroke="#40634f"/>
+          <text x="454" y="505" text-anchor="middle" font-size="20" font-weight="700">7. 跑最小样本闭环</text>
+          <text x="454" y="532" text-anchor="middle" font-size="14" fill="#596b68">先用 Markdown 测 ingest</text>
+          <text x="454" y="556" text-anchor="middle" font-size="14" fill="#596b68">再测 search / show，不要一上来就大规模导库</text>
+
+          <rect x="686" y="476" width="360" height="112" rx="18" fill="#eef4ff" stroke="#2f5ea8"/>
+          <text x="866" y="505" text-anchor="middle" font-size="20" font-weight="700">8. 再打开高级能力</text>
+          <text x="866" y="532" text-anchor="middle" font-size="14" fill="#596b68">embed -> vsearch -> topics -> workspace</text>
+          <text x="866" y="556" text-anchor="middle" font-size="14" fill="#596b68">最后再理解 MCP，接外部客户端</text>
+
+          <rect x="88" y="676" width="1144" height="290" rx="22" fill="#fffcf7" stroke="rgba(31,42,42,0.12)"/>
+          <text x="660" y="714" text-anchor="middle" font-size="22" font-weight="700">三条你最容易走错的岔路</text>
+
+          <rect x="128" y="742" width="320" height="184" rx="18" fill="#fff7f1" stroke="#b8662f"/>
+          <text x="288" y="772" text-anchor="middle" font-size="18" font-weight="700">错误顺序 A</text>
+          <text x="288" y="800" text-anchor="middle" font-size="14" fill="#596b68">先折腾 MCP 客户端</text>
+          <text x="288" y="823" text-anchor="middle" font-size="14" fill="#596b68">但本地 CLI / config / data 没跑通</text>
+          <text x="288" y="846" text-anchor="middle" font-size="14" fill="#596b68">结果：只是换个入口报错</text>
+          <text x="288" y="882" text-anchor="middle" font-size="15" font-weight="700">正确做法：先 CLI，后 MCP</text>
+
+          <rect x="500" y="742" width="320" height="184" rx="18" fill="#fef6fb" stroke="#7d4b63"/>
+          <text x="660" y="772" text-anchor="middle" font-size="18" font-weight="700">错误顺序 B</text>
+          <text x="660" y="800" text-anchor="middle" font-size="14" fill="#596b68">把 cc switch 和 ScholarAIO 的 LLM 配置混成一套</text>
+          <text x="660" y="823" text-anchor="middle" font-size="14" fill="#596b68">结果：不知道是谁在调哪个接口</text>
+          <text x="660" y="846" text-anchor="middle" font-size="14" fill="#596b68">排障会非常痛苦</text>
+          <text x="660" y="882" text-anchor="middle" font-size="15" font-weight="700">正确做法：先解耦管理</text>
+
+          <rect x="872" y="742" width="320" height="184" rx="18" fill="#f2faf4" stroke="#40634f"/>
+          <text x="1032" y="772" text-anchor="middle" font-size="18" font-weight="700">错误顺序 C</text>
+          <text x="1032" y="800" text-anchor="middle" font-size="14" fill="#596b68">第一天就上 PDF、大批量导库、主题建模</text>
+          <text x="1032" y="823" text-anchor="middle" font-size="14" fill="#596b68">结果：一旦失败，不知道卡在哪层</text>
+          <text x="1032" y="846" text-anchor="middle" font-size="14" fill="#596b68">入门期不应该这么做</text>
+          <text x="1032" y="882" text-anchor="middle" font-size="15" font-weight="700">正确做法：先最小闭环</text>
+        </g>
+
+        <g>
+          <path d="M438 184 L470 184" stroke="#40634f" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+          <path d="M830 184 L862 184" stroke="#40634f" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+          <path d="M1042 240 L1042 302" stroke="#2f5ea8" stroke-width="3" fill="none" marker-end="url(#arrowBlue)"/>
+          <path d="M862 358 C845 358, 842 358, 830 358" stroke="#2f5ea8" stroke-width="3" fill="none" marker-end="url(#arrowBlue)"/>
+          <path d="M470 358 L438 358" stroke="#2f5ea8" stroke-width="3" fill="none" marker-end="url(#arrowBlue)"/>
+          <path d="M258 414 C258 458, 330 496, 274 532" stroke="#40634f" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+          <path d="M650 414 C650 456, 586 496, 534 528" stroke="#7d4b63" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+          <path d="M1042 414 C1042 456, 972 496, 926 528" stroke="#b8662f" stroke-width="3" fill="none" marker-end="url(#arrowOrange)"/>
+          <path d="M634 532 L686 532" stroke="#40634f" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+        </g>
+      </svg>
+    </section>
+
+    <section class="section">
+      <h2>二、你当前最适合的具体配置</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>1. Python 环境</h3>
+          <p>建议固定成一套独立 Conda 环境，不要复用现有科研环境。</p>
+          <div class="code">conda create -n scholaraio python=3.11 -y
+conda activate scholaraio
+python --version</div>
+          <ul>
+            <li>Python 3.11 是当前最稳妥选择。</li>
+            <li>后续 MinerU、embedding、topics 都放这个环境里调试。</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>2. 项目安装</h3>
+          <p>你是本地源码开发模式，所以直接在仓库根目录 editable install。</p>
+          <div class="code">pip install -U pip setuptools wheel
+pip install -e ".[full]"</div>
+          <ul>
+            <li>full 会把 embed、topics、import、pdf 相关都装上。</li>
+            <li>如果只想先跑最小验证，也可以先 pip install -e .</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>3. 配置文件职责</h3>
+          <p>项目配置建议拆成“公共配置”和“敏感配置”两层。</p>
+          <div class="code">cp config.local.example.yaml config.local.yaml</div>
+          <ul>
+            <li>config.yaml：路径、backend、model、默认策略。</li>
+            <li>config.local.yaml：API key、contact email、Zotero。</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>4. LLM API 与 cc switch</h3>
+          <p>最好把两套调用面分开：</p>
+          <ul>
+            <li>cc switch：管 Claude Code 主 agent 用哪个模型。</li>
+            <li>ScholarAIO：在 config.local.yaml 里单独放内部 LLM key。</li>
+          </ul>
+          <div class="code">llm:
+  api_key: "你的 ScholarAIO LLM Key"
+
+ingest:
+  contact_email: "你的邮箱"
+  mineru_api_key: "你的 MinerU Cloud Key"</div>
+        </article>
+
+        <article class="card">
+          <h3>5. PDF 转换建议</h3>
+          <p>你的目标是本地优先、云端兜底，这也是最合理的生产路径。</p>
+          <ul>
+            <li>本地 MinerU：平时主用，节省云端依赖。</li>
+            <li>云 API：本地服务没起时自动兜底。</li>
+            <li>入门期建议先用 Markdown 验证 ingest，再测试 PDF。</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>6. GPU 与本地嵌入</h3>
+          <p>你有 NVIDIA GPU，可以直接启用本地 embedding。</p>
+          <ul>
+            <li>默认模型是 Qwen3-Embedding-0.6B。</li>
+            <li>首次下载较大，之后本地缓存。</li>
+            <li>建议先验证 embed，再碰 topics。</li>
+          </ul>
+          <div class="code">scholaraio embed
+scholaraio vsearch "你的自然语言问题"</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>三、首次完整执行顺序</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>阶段 A：安装与检查</h3>
+          <div class="code">conda create -n scholaraio python=3.11 -y
+conda activate scholaraio
+pip install -U pip setuptools wheel
+pip install -e ".[full]"
+cp config.local.example.yaml config.local.yaml
+scholaraio setup check --lang zh</div>
+        </article>
+
+        <article class="card">
+          <h3>阶段 B：补齐 key 与 backend</h3>
+          <ul>
+            <li>在 config.yaml 确定 llm.backend、model、base_url。</li>
+            <li>在 config.local.yaml 写入 llm.api_key。</li>
+            <li>可选写入 ingest.mineru_api_key 作为云 fallback。</li>
+            <li>填 contact_email，提高 Crossref 体验。</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>阶段 C：最小闭环</h3>
+          <div class="code">scholaraio setup check --lang zh
+scholaraio --help
+scholaraio pipeline ingest
+scholaraio search "关键词"
+scholaraio show 论文ID --layer 2</div>
+          <p>建议第一篇先用 Markdown，而不是 PDF。</p>
+        </article>
+
+        <article class="card">
+          <h3>阶段 D：再开高级能力</h3>
+          <div class="code">scholaraio embed
+scholaraio vsearch "自然语言问题"
+scholaraio topics --build</div>
+          <p>等 CLI 流畅之后，再去研究 scholaraio-mcp 和外部客户端接入。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>四、MCP 应该怎么理解</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>MCP 的本质</h3>
+          <ul>
+            <li>它不是新的业务能力。</li>
+            <li>它是把已有 Python 能力包装成标准 tools。</li>
+            <li>外部客户端通过 MCP 协议调用这些 tools。</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>为什么你现在先不用急着接</h3>
+          <ul>
+            <li>如果 CLI 没跑通，MCP 只是换个入口报错。</li>
+            <li>先本地搞清配置、数据目录、依赖与 API。</li>
+            <li>等最小闭环稳了，再接 Claude Desktop 或 IDE。</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <div class="footer">
+      配套文档在 explain.md。推荐你先打开这个 HTML 看整体，再照着 explain.md 一步步执行命令。
+    </div>
+  </div>
+</body>
+</html>

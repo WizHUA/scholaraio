@@ -58,7 +58,8 @@ class LLMConfig:
             - ``"anthropic"`` — Anthropic Messages API（Claude 系列）
             - ``"google"`` — Google Gemini API
         model: 模型名称。
-        base_url: API 基础 URL（不含 ``/v1/...`` 后缀）。
+        base_url: API 基础 URL 或版本化根路径（例如 ``https://api.deepseek.com``、
+            ``https://api.deepseek.com/v1``、``https://ark.cn-beijing.volces.com/api/coding/v3``）。
         api_key: API 密钥，建议放 config.local.yaml 或环境变量。
         timeout: 普通 LLM 调用超时（秒）。
         timeout_toc: enrich-toc 调用超时（秒），标题列表较长。

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -352,6 +353,37 @@ def timed(name: str = "", category: str = "step"):
 # ============================================================================
 
 
+def _build_openai_compat_url(base_url: str) -> str:
+    """Build the final chat-completions URL for OpenAI-compatible backends.
+
+    Accepts plain roots like ``https://api.deepseek.com``, versioned roots like
+    ``https://api.deepseek.com/v1`` or Ark Coding Plan roots like
+    ``https://ark.cn-beijing.volces.com/api/coding/v3``.
+
+    If the caller already passes a completions endpoint, keep it unchanged.
+    """
+
+    base = base_url.rstrip("/")
+    if base.endswith("/chat/completions") or base.endswith("/v1/chat/completions"):
+        return base
+    if base.endswith("/messages"):
+        return base
+    if "/api/coding" in base or re.search(r"/v\d+$", base):
+        return base + "/chat/completions"
+    return base + "/v1/chat/completions"
+
+
+def _supports_openai_json_mode(base_url: str) -> bool:
+    """Return whether the backend should receive ``response_format``.
+
+    Some OpenAI-compatible gateways, including Ark Coding Plan, reject the
+    ``response_format`` field even though they accept regular chat completions.
+    For those backends we rely on prompt-level JSON constraints instead.
+    """
+
+    return "/api/coding" not in base_url.rstrip("/")
+
+
 def call_llm(
     prompt: str,
     config: Config | LLMConfig,
@@ -368,7 +400,7 @@ def call_llm(
     根据 ``llm_cfg.backend`` 分发到对应后端：
     - ``"anthropic"``  — 调用 Anthropic 接口；
     - ``"google"``     — 调用 Google Gemini 接口；
-    - 其他值           — 视为 OpenAI-compatible，使用 ``/v1/chat/completions`` 端点。
+    - 其他值           — 视为 OpenAI-compatible，自动拼接 chat-completions 端点。
 
     每个后端都会在可用时解析 token 用量（如 ``response.usage`` 或等价字段），
     并将 token 统计和耗时记录到 MetricsStore。
@@ -490,7 +522,7 @@ def _call_openai_compat(
     timeout: int,
 ) -> tuple[str, int, int, int, str]:
     """OpenAI-compatible /v1/chat/completions（DeepSeek / OpenAI / vLLM / Ollama 等）。"""
-    url = llm_cfg.base_url.rstrip("/") + "/v1/chat/completions"
+    url = _build_openai_compat_url(llm_cfg.base_url)
 
     messages: list[dict[str, str]] = []
     if system:
@@ -503,7 +535,7 @@ def _call_openai_compat(
         "temperature": 0,
         "max_tokens": max_tokens,
     }
-    if json_mode:
+    if json_mode and _supports_openai_json_mode(llm_cfg.base_url):
         payload["response_format"] = {"type": "json_object"}
 
     headers = {
