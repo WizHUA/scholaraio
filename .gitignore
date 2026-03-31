@@ -37,3 +37,6 @@ docs/issues.md
 
 # Backups
 *.bak
+
+# Local symlink entry
+/skills
