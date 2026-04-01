@@ -534,8 +534,32 @@ def _call_openai_compat(
         "Content-Type": "application/json",
     }
 
-    resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
-    resp.raise_for_status()
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+    except requests.HTTPError:
+        # Some OpenAI-compatible models (e.g. ark-code-latest) reject
+        # response_format=json_object. Retry once without response_format.
+        if json_mode and "response_format" in payload:
+            err_text = ""
+            try:
+                err_text = (resp.text or "")
+            except Exception:
+                err_text = ""
+            if "response_format" in err_text and "json_object" in err_text and "not supported" in err_text:
+                payload.pop("response_format", None)
+                # Preserve JSON expectation through instruction when server-side JSON mode is unavailable.
+                if messages:
+                    messages[-1]["content"] = (
+                        "You MUST respond with valid JSON only. No markdown fencing, no explanation.\n\n"
+                        + messages[-1]["content"]
+                    )
+                resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+                resp.raise_for_status()
+            else:
+                raise
+        else:
+            raise
     data = resp.json()
     try:
         content = data["choices"][0]["message"]["content"]
