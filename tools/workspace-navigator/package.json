@@ -1,0 +1,26 @@
+{
+  "name": "workspace-navigator",
+  "displayName": "Workspace Navigator",
+  "description": "快速定位并展开 workspace/ 子目录",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": { "vscode": "^1.74.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onCommand:workspace-navigator.go"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "workspace-navigator.go",
+        "title": "Workspace: 定位到项目目录"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "workspace-navigator.go",
+        "key": "ctrl+alt+w",
+        "mac": "cmd+alt+w"
+      }
+    ]
+  }
+}

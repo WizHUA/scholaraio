@@ -335,7 +335,7 @@ translate:
 
 Skills 定义在 `.claude/skills/` 目录，遵循 [Agent Skills](https://agentskills.io) 开放标准。每个 skill 是一个文件夹，包含 `SKILL.md`（YAML frontmatter + 指令）。根目录 `skills/` 为指向 `.claude/skills/` 的符号链接，供 Claude Code 插件系统发现。
 
-**现有 skills（26 个）：**
+**现有 skills（27 个）：**
 
 知识库管理：
 - `search` — 文献搜索（关键词 / 语义 / 作者 / 融合检索 / 高引排行 / 联邦跨库搜索）
@@ -368,6 +368,7 @@ Skills 定义在 `.claude/skills/` 目录，遵循 [Agent Skills](https://agents
 - `document` — Office 文档生成与检查（python-docx / python-pptx / openpyxl，直接调用 API 构建 DOCX / PPTX / XLSX + `document inspect` 结构检查）
 
 系统运维：
+- `onboard` — 会话入场（环境速检 + 文库概况 + 工作区定位 + 能力速查）
 - `setup` — 环境检测与安装向导
 - `metrics` — LLM token 用量和调用统计
 

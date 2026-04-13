@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m scholaraio search \"QCSC\" --limit 5 2>&1)",
+      "Bash(conda run:*)",
+      "Bash(conda env:*)",
+      "Bash(python -m scholaraio.cli usearch \"QCSC\" --top 5 2>&1)",
+      "Bash(D:\\\\zzztempE\\\\scholaraio\\\\.venv\\\\Scripts\\\\scholaraio.exe usearch:*)",
+      "Bash(cd D:/zzztempE/scholaraio && .venv/Scripts/scholaraio.exe usearch \"QCSC\" --top 5 2>&1)"
+    ]
+  }
+}

@@ -326,7 +326,7 @@ Three backend protocols supported: `openai-compat` (DeepSeek / OpenAI / vLLM / O
 
 Skills are defined in `.claude/skills/` directory (also discoverable via `.agents/skills/` symlink), following the [Agent Skills](https://agentskills.io) open standard. Each skill is a folder containing a `SKILL.md` file (YAML frontmatter + instructions).
 
-**Available skills (26):**
+**Available skills (27):**
 
 Knowledge base management:
 - `search` — Literature search (keyword / semantic / author / hybrid retrieval / top-cited ranking / federated cross-source search)
@@ -361,6 +361,7 @@ Translation:
 - `translate` — Paper translation (language detection + LLM chunked translation + batch translation)
 
 System maintenance:
+- `onboard` — Session onboarding (environment check + library overview + workspace navigation + capability cheat sheet)
 - `setup` — Environment detection and setup wizard
 - `metrics` — LLM token usage and call statistics
 
