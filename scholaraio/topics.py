@@ -18,7 +18,7 @@ import logging
 import pickle
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from scholaraio.papers import best_citation as _best_cite
 from scholaraio.papers import read_meta as _read_meta
@@ -293,7 +293,7 @@ def build_topics(
     nr_topics: int | str | None = "auto",
     save_path: Path | None = None,
     cfg: Config | None = None,
-    **fit_kwargs,
+    **fit_kwargs: Any,
 ) -> BERTopic:
     """构建 BERTopic 主题模型。
 

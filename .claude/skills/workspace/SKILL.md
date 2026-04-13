@@ -25,7 +25,7 @@ scholaraio ws init <名称>
 scholaraio ws add <名称> <论文标识...>
 ```
 
-论文标识可以是：DOI、目录名、UUID、或搜索关键词（模糊匹配）。
+论文标识可以是：DOI、目录名、UUID。需要按关键词批量添加时，请使用 `--search`。
 
 批量添加：
 ```bash

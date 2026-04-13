@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 import re
 import time
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import requests
+
+from scholaraio.sources.arxiv import get_arxiv_paper, normalize_arxiv_ref
 
 from ._extract import _extract_lastname
 from ._models import (
@@ -30,18 +32,23 @@ _log = logging.getLogger(__name__)
 # ============================================================================
 
 
-def query_semantic_scholar(doi: str = "", title: str = "") -> dict:
+def query_semantic_scholar(doi: str = "", title: str = "", arxiv_id: str = "") -> dict:
     """查询 Semantic Scholar API。
 
     Args:
         doi: DOI 标识符（优先使用）。
-        title: 论文标题（DOI 为空时用于搜索）。
+        arxiv_id: arXiv 标识符（如 ``2401.12345``，DOI 为空时使用）。
+        title: 论文标题（DOI 和 arXiv ID 均为空时用于搜索）。
 
     Returns:
         API 返回的论文数据字典，未找到时返回空字典。
     """
     if doi:
-        url = f"{S2_BASE}/DOI:{doi}?fields={S2_FIELDS}"
+        paper_id = quote(f"DOI:{doi}", safe="")
+        url = f"{S2_BASE}/{paper_id}?fields={S2_FIELDS}"
+    elif arxiv_id:
+        paper_id = quote(f"arXiv:{arxiv_id}", safe="")
+        url = f"{S2_BASE}/{paper_id}?fields={S2_FIELDS}"
     elif title:
         params = {"query": title, "limit": "3", "fields": S2_FIELDS}
         url = f"{S2_BASE}/search?{urlencode(params)}"
@@ -193,6 +200,72 @@ def _title_keywords(title: str, max_words: int = 8) -> str:
     return " ".join(significant[:max_words])
 
 
+def _is_arxiv_datacite_doi(doi: str) -> bool:
+    """Return True if *doi* is arXiv's own DataCite DOI, not a publisher DOI."""
+    normalized = (doi or "").strip().lower()
+    return normalized.startswith("10.48550/arxiv.")
+
+
+def _candidate_first_author_lastname(cr_data: dict, s2_data: dict, oa_data: dict) -> str:
+    """Return the candidate first-author lastname from API search results."""
+    if cr_data.get("author"):
+        first = cr_data["author"][0]
+        family = (first.get("family", "") or "").strip()
+        if family:
+            return family
+        given_joined = f"{first.get('given', '')} {first.get('family', '')}".strip()
+        if given_joined:
+            return _extract_lastname(given_joined)
+    if s2_data.get("authors"):
+        name = (s2_data["authors"][0].get("name", "") or "").strip()
+        if name:
+            return _extract_lastname(name)
+    if oa_data.get("authorships"):
+        name = ((oa_data["authorships"][0].get("author", {}) or {}).get("display_name", "") or "").strip()
+        if name:
+            return _extract_lastname(name)
+    return ""
+
+
+def _candidate_year(cr_data: dict, s2_data: dict, oa_data: dict) -> int | None:
+    """Return the candidate publication year from API search results."""
+    for date_key in ("published-print", "published-online"):
+        parts = (cr_data.get(date_key, {}) or {}).get("date-parts", [[]])
+        if parts and parts[0] and parts[0][0]:
+            try:
+                return int(parts[0][0])
+            except (TypeError, ValueError):
+                break
+    if s2_data.get("year"):
+        try:
+            return int(s2_data["year"])
+        except (TypeError, ValueError):
+            pass
+    if oa_data.get("publication_year"):
+        try:
+            return int(oa_data["publication_year"])
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def _search_result_consistent_with_local(meta: PaperMetadata, cr_data: dict, s2_data: dict, oa_data: dict) -> bool:
+    """Reject title-search hits when both author and year clearly conflict.
+
+    For title-driven enrichment we tolerate missing local fields, but when local extraction
+    already has both a first-author lastname and a year, an API hit should not replace the
+    paper with a different author *and* a far-away year.
+    """
+    local_last = (meta.first_author_lastname or "").strip().lower()
+    candidate_last = _candidate_first_author_lastname(cr_data, s2_data, oa_data).strip().lower()
+    local_year = meta.year
+    candidate_year = _candidate_year(cr_data, s2_data, oa_data)
+
+    author_conflict = bool(local_last and candidate_last and local_last != candidate_last)
+    year_conflict = bool(local_year and candidate_year and abs(int(local_year) - int(candidate_year)) > 2)
+    return not (author_conflict and year_conflict)
+
+
 # ============================================================================
 #  Relaxed Queries (Tier 3)
 # ============================================================================
@@ -265,6 +338,37 @@ def _reconstruct_oa_abstract(inverted_index: dict) -> str:
     return " ".join(w for _, w in word_positions)
 
 
+def _apply_arxiv_metadata(meta: PaperMetadata, arxiv_data: dict) -> None:
+    """Apply authoritative arXiv metadata without letting enrichers overwrite it."""
+    if not arxiv_data:
+        return
+    if arxiv_data.get("title"):
+        meta.title = arxiv_data["title"]
+    if arxiv_data.get("authors"):
+        authors = []
+        for author in arxiv_data["authors"]:
+            author = (author or "").strip()
+            if "," in author:
+                last, first = [part.strip() for part in author.split(",", 1)]
+                author = f"{first} {last}".strip()
+            authors.append(author)
+        meta.authors = authors
+        meta.first_author = meta.authors[0]
+        meta.first_author_lastname = _extract_lastname(meta.first_author)
+    if arxiv_data.get("year"):
+        try:
+            meta.year = int(arxiv_data["year"])
+        except (TypeError, ValueError):
+            pass
+    if arxiv_data.get("abstract"):
+        meta.abstract = arxiv_data["abstract"]
+    if arxiv_data.get("doi") and not meta.doi and not _is_arxiv_datacite_doi(arxiv_data["doi"]):
+        meta.doi = arxiv_data["doi"]
+    official_arxiv_id = normalize_arxiv_ref(arxiv_data.get("arxiv_id", ""))
+    if official_arxiv_id:
+        meta.arxiv_id = official_arxiv_id
+
+
 def enrich_metadata(meta: PaperMetadata) -> PaperMetadata:
     """通过 API 查询补全和覆盖元数据。
 
@@ -286,6 +390,16 @@ def enrich_metadata(meta: PaperMetadata) -> PaperMetadata:
     cr_data: dict = {}
     s2_data: dict = {}
     oa_data: dict = {}
+    arxiv_data: dict = {}
+    arxiv_metadata_applied = False
+
+    if meta.arxiv_id:
+        normalized_arxiv_id = normalize_arxiv_ref(meta.arxiv_id)
+        if normalized_arxiv_id:
+            meta.arxiv_id = normalized_arxiv_id
+
+    if meta.arxiv_id and _is_arxiv_datacite_doi(meta.doi):
+        meta.doi = ""
 
     # ---- Tier 1: DOI lookup (all three, DOI queries are not rate-limited) ----
     if meta.doi:
@@ -307,6 +421,23 @@ def enrich_metadata(meta: PaperMetadata) -> PaperMetadata:
             else:
                 meta.extraction_method = "doi_lookup"
 
+    # ---- Tier 1.5: arXiv ID lookup (official metadata + S2 enrichment) ----
+    if not cr_data and not s2_data and not oa_data and meta.arxiv_id:
+        _log.debug("Trying arXiv ID lookup: %s", meta.arxiv_id)
+        arxiv_data = get_arxiv_paper(meta.arxiv_id)
+        s2_data = query_semantic_scholar(arxiv_id=meta.arxiv_id)
+        if arxiv_data or s2_data:
+            arxiv_metadata_applied = bool(arxiv_data)
+            _apply_arxiv_metadata(meta, arxiv_data)
+            ext_ids = s2_data.get("externalIds") or {}
+            if ext_ids.get("DOI") and not meta.doi and not _is_arxiv_datacite_doi(ext_ids["DOI"]):
+                meta.doi = ext_ids["DOI"]
+                _log.debug("arXiv → DOI resolved: %s", meta.doi)
+            if meta.doi:
+                cr_data = query_crossref(doi=meta.doi)
+                oa_data = query_openalex(doi=meta.doi)
+            meta.extraction_method = "arxiv_lookup"
+
     # ---- Tier 2: Title search via Crossref + OA (no rate limit) ----
     if not cr_data and not s2_data and not oa_data and meta.title:
         _log.debug("No DOI match, trying title search")
@@ -327,7 +458,11 @@ def enrich_metadata(meta: PaperMetadata) -> PaperMetadata:
                 oa_data = query_openalex(doi=found_doi)
 
         if cr_data or s2_data or oa_data:
-            meta.extraction_method = "title_search"
+            if not _search_result_consistent_with_local(meta, cr_data, s2_data, oa_data):
+                _log.debug("title search mismatch: discarding candidate due to author/year conflict")
+                cr_data, s2_data, oa_data = {}, {}, {}
+            else:
+                meta.extraction_method = "title_search"
 
     # ---- Tier 3: Relaxed title search (Crossref + OA, lower threshold) ----
     if not cr_data and not s2_data and not oa_data and meta.title:
@@ -345,17 +480,28 @@ def enrich_metadata(meta: PaperMetadata) -> PaperMetadata:
             s2_data = query_semantic_scholar(doi=found_doi)
 
         if cr_data or s2_data or oa_data:
-            meta.extraction_method = "title_search_relaxed"
+            if not _search_result_consistent_with_local(meta, cr_data, s2_data, oa_data):
+                _log.debug("relaxed title search mismatch: discarding candidate due to author/year conflict")
+                cr_data, s2_data, oa_data = {}, {}, {}
+            else:
+                meta.extraction_method = "title_search_relaxed"
 
     # ---- Tier 4: S2 title search (last resort, may be rate-limited) ----
     if not cr_data and not s2_data and not oa_data and meta.title:
         _log.debug("Trying S2 title search (last resort)")
         s2_data = query_semantic_scholar(title=meta.title)
         if s2_data:
-            meta.extraction_method = "title_search_s2"
+            if not _search_result_consistent_with_local(meta, {}, s2_data, {}):
+                _log.debug("S2 title search mismatch: discarding candidate due to author/year conflict")
+                s2_data = {}
+            else:
+                meta.extraction_method = "title_search_s2"
 
     # ---- Tier 5: local_only ----
-    if not cr_data and not s2_data and not oa_data:
+    if arxiv_metadata_applied and "arxiv" not in meta.api_sources:
+        meta.api_sources.append("arxiv")
+
+    if not cr_data and not s2_data and not oa_data and not arxiv_metadata_applied:
         meta.extraction_method = meta.extraction_method or "local_only"
         return meta
 
@@ -418,17 +564,20 @@ def enrich_metadata(meta: PaperMetadata) -> PaperMetadata:
         meta.api_sources.append("semantic_scholar")
         meta.citation_count_s2 = s2_data.get("citationCount")
         meta.s2_paper_id = s2_data.get("paperId", "")
-        if not meta.doi and s2_data.get("externalIds", {}).get("DOI"):
-            meta.doi = s2_data["externalIds"]["DOI"]
+        ext_ids = s2_data.get("externalIds") or {}
+        if not meta.doi and ext_ids.get("DOI") and not _is_arxiv_datacite_doi(ext_ids["DOI"]):
+            meta.doi = ext_ids["DOI"]
+        if not meta.arxiv_id and ext_ids.get("ArXiv"):
+            meta.arxiv_id = ext_ids["ArXiv"]
         # Title: override only if Crossref didn't provide one
-        if not cr_data and s2_data.get("title"):
+        if not cr_data and not arxiv_metadata_applied and s2_data.get("title"):
             meta.title = s2_data["title"]
         if not meta.year and s2_data.get("year"):
             meta.year = s2_data["year"]
         if not meta.journal and s2_data.get("venue"):
             meta.journal = s2_data["venue"]
         # Authors: override only if Crossref didn't provide them
-        if not cr_data and s2_data.get("authors"):
+        if not cr_data and not arxiv_metadata_applied and s2_data.get("authors"):
             meta.authors = [a.get("name", "") for a in s2_data["authors"]]
             if meta.authors:
                 meta.first_author = meta.authors[0]
@@ -437,7 +586,7 @@ def enrich_metadata(meta: PaperMetadata) -> PaperMetadata:
         if not meta.paper_type and s2_data.get("publicationTypes"):
             meta.paper_type = s2_data["publicationTypes"][0]
         # Abstract — S2 gives clean plain text (preferred)
-        if s2_data.get("abstract"):
+        if s2_data.get("abstract") and not (arxiv_metadata_applied and arxiv_data.get("abstract")):
             meta.abstract = s2_data["abstract"]
         # References — extract DOIs from S2 references list
         if s2_data.get("references"):
@@ -464,7 +613,9 @@ def enrich_metadata(meta: PaperMetadata) -> PaperMetadata:
         meta.citation_count_openalex = oa_data.get("cited_by_count")
         meta.openalex_id = oa_data.get("id", "")
         if not meta.doi and oa_data.get("doi"):
-            meta.doi = oa_data["doi"].replace("https://doi.org/", "")
+            oa_doi = oa_data["doi"].replace("https://doi.org/", "")
+            if not _is_arxiv_datacite_doi(oa_doi):
+                meta.doi = oa_doi
         # Title: override only if neither Crossref nor S2 provided one
         if not cr_data and not s2_data and oa_data.get("title"):
             meta.title = oa_data["title"]

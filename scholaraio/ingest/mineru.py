@@ -1,14 +1,16 @@
 """
-pdf_to_markdown.py — 使用本地 MinerU 服务将 PDF 转换为 Markdown
-================================================================
+ingest/mineru.py — MinerU PDF → Markdown helpers
+===============================================
 
-调用本地部署的 MinerU API (默认 http://localhost:8000) 将 PDF 文件转换为
-Markdown 格式。支持单文件转换和批量处理整个目录。
+本模块提供两层能力：
+
+1. 本地 MinerU API 转换（默认 ``http://localhost:8000``），支持单文件转换和目录批量转换
+2. `mineru-open-api` 云端 CLI 辅助函数，供 ingest pipeline / attach-pdf 等主流程调用
 
 前置条件
 --------
     需要先启动 MinerU API 服务，默认监听 http://localhost:8000。
-    可用 ``python3 pdf_to_markdown.py status`` 检查服务是否在线。
+    可用 ``python -m scholaraio.ingest.mineru status`` 检查服务是否在线。
 
 工作流程
 --------
@@ -28,27 +30,27 @@ Markdown 格式。支持单文件转换和批量处理整个目录。
 命令行用法
 ----------
     # 检查 MinerU 服务状态
-    python3 pdf_to_markdown.py status
-    python3 pdf_to_markdown.py status --api-url http://host:port
+    python -m scholaraio.ingest.mineru status
+    python -m scholaraio.ingest.mineru status --api-url http://host:port
 
     # 单文件转换
-    python3 pdf_to_markdown.py convert paper.pdf
-    python3 pdf_to_markdown.py convert paper.pdf -o ./output/       # 指定输出目录
-    python3 pdf_to_markdown.py convert paper.pdf --start-page 0 --end-page 10
-    python3 pdf_to_markdown.py convert paper.pdf --backend vlm-auto-engine
-    python3 pdf_to_markdown.py convert paper.pdf --lang en          # 英文 PDF
-    python3 pdf_to_markdown.py convert paper.pdf --parse-method ocr # 强制 OCR
-    python3 pdf_to_markdown.py convert paper.pdf --no-formula --no-table
-    python3 pdf_to_markdown.py convert paper.pdf --save-content-list
-    python3 pdf_to_markdown.py convert paper.pdf --dry-run          # 预览, 不写文件
+    python -m scholaraio.ingest.mineru convert paper.pdf
+    python -m scholaraio.ingest.mineru convert paper.pdf -o ./output/       # 指定输出目录
+    python -m scholaraio.ingest.mineru convert paper.pdf --start-page 0 --end-page 10
+    python -m scholaraio.ingest.mineru convert paper.pdf --backend vlm-auto-engine
+    python -m scholaraio.ingest.mineru convert paper.pdf --lang en          # 英文 PDF
+    python -m scholaraio.ingest.mineru convert paper.pdf --parse-method ocr # 强制 OCR
+    python -m scholaraio.ingest.mineru convert paper.pdf --no-formula --no-table
+    python -m scholaraio.ingest.mineru convert paper.pdf --save-content-list
+    python -m scholaraio.ingest.mineru convert paper.pdf --dry-run          # 预览, 不写文件
 
     # 批量处理
-    python3 pdf_to_markdown.py batch ./papers/                      # 目录下所有 PDF
-    python3 pdf_to_markdown.py batch ./papers/ -r                   # 递归子目录
-    python3 pdf_to_markdown.py batch ./papers/ -o ./md_output/      # 指定输出目录
-    python3 pdf_to_markdown.py batch ./papers/ --force              # 重新转换已有 .md 的
-    python3 pdf_to_markdown.py batch ./papers/ --dry-run            # 干跑预览
-    python3 pdf_to_markdown.py batch ./papers/ --backend pipeline --lang ch
+    python -m scholaraio.ingest.mineru batch ./papers/                      # 目录下所有 PDF
+    python -m scholaraio.ingest.mineru batch ./papers/ -r                   # 递归子目录
+    python -m scholaraio.ingest.mineru batch ./papers/ -o ./md_output/      # 指定输出目录
+    python -m scholaraio.ingest.mineru batch ./papers/ --force              # 重新转换已有 .md 的
+    python -m scholaraio.ingest.mineru batch ./papers/ --dry-run            # 干跑预览
+    python -m scholaraio.ingest.mineru batch ./papers/ --backend pipeline --lang ch
 
 公共选项 (convert / batch 共用)
 -------------------------------
@@ -78,12 +80,19 @@ MinerU 后端选项 (--backend)
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import hashlib
 import json
 import logging
+import os
 import shutil
+import subprocess
 import sys
+import tempfile
 import time
-from dataclasses import dataclass
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import requests
@@ -104,10 +113,23 @@ VALID_BACKENDS = [
     "hybrid-auto-engine",
     "hybrid-http-client",
 ]
+VALID_CLOUD_MODEL_VERSIONS = ["pipeline", "vlm", "MinerU-HTML"]
+PDF_CLOUD_MODEL_VERSIONS = {"pipeline", "vlm"}
 
 DEFAULT_BACKEND = "pipeline"
 DEFAULT_LANG = "ch"
 API_TIMEOUT = 600  # PDF parsing can take a long time
+DEFAULT_UPLOAD_TIMEOUT = 120
+DEFAULT_DOWNLOAD_TIMEOUT = 120
+DEFAULT_UPLOAD_RETRIES = 3
+DEFAULT_DOWNLOAD_RETRIES = 3
+DEFAULT_UPLOAD_WORKERS = 4
+DEFAULT_POLL_TIMEOUT = 900
+PDF_VALIDATION_ERROR_KIND = "pdf_validation"
+CLOUD_SAFE_FILENAME_THRESHOLD = 100
+CLOUD_SAFE_FILENAME_MAX_CHARS = 128
+CLOUD_SAFE_FILENAME_MAX_BYTES = 128
+CLOUD_SAFE_FILENAME_PREFIX_CHARS = 100
 
 
 # ============================================================================
@@ -126,6 +148,7 @@ class ConvertResult:
         pages_parsed: 解析的页数。
         elapsed_seconds: 转换耗时（秒）。
         error: 失败时的错误信息，成功时为 ``None``。
+        error_kind: 机器可读的错误类型，用于决定是否允许 fallback。
         md_size: 输出 Markdown 的字节数。
     """
 
@@ -135,6 +158,7 @@ class ConvertResult:
     pages_parsed: int = 0
     elapsed_seconds: float = 0.0
     error: str | None = None
+    error_kind: str | None = None
     md_size: int = 0  # bytes
 
 
@@ -146,6 +170,8 @@ class ConvertOptions:
         api_url: MinerU 服务地址。
         output_dir: 输出目录，为 ``None`` 时与 PDF 同目录。
         backend: MinerU 解析后端（``pipeline`` | ``vlm-auto-engine`` 等）。
+        cloud_model_version: `mineru-open-api extract --model` 对应模型（``pipeline`` | ``vlm`` | ``MinerU-HTML``）。
+            留空时根据 ``backend`` 做兼容映射。
         lang: OCR 语言（``ch`` | ``en`` | ``latin`` 等）。
         parse_method: 解析方式（``auto`` | ``txt`` | ``ocr``）。
         formula_enable: 是否启用公式解析。
@@ -160,6 +186,7 @@ class ConvertOptions:
     api_url: str = DEFAULT_API_URL
     output_dir: Path | None = None
     backend: str = DEFAULT_BACKEND
+    cloud_model_version: str = ""
     lang: str = DEFAULT_LANG
     parse_method: str = "auto"
     formula_enable: bool = True
@@ -169,6 +196,30 @@ class ConvertOptions:
     save_content_list: bool = False
     force: bool = False
     dry_run: bool = False
+    upload_workers: int = DEFAULT_UPLOAD_WORKERS
+    upload_retries: int = DEFAULT_UPLOAD_RETRIES
+    download_retries: int = DEFAULT_DOWNLOAD_RETRIES
+    poll_timeout: int = DEFAULT_POLL_TIMEOUT
+
+
+@dataclass(frozen=True)
+class PDFValidationResult:
+    """Result of checking whether a PDF is safe to hand to a parser."""
+
+    ok: bool
+    error: str | None = None
+    page_count: int | None = None
+    encrypted: bool = False
+    deep_checked: bool = False
+
+
+@dataclass(frozen=True)
+class CloudInputAlias:
+    """Temporary cloud upload input that keeps original PDF identity separate."""
+
+    path: Path
+    output_stem: str
+    aliased: bool = False
 
 
 # ============================================================================
@@ -190,6 +241,131 @@ def check_server(api_url: str = DEFAULT_API_URL) -> bool:
         return resp.status_code == 200
     except requests.ConnectionError:
         return False
+
+
+def validate_pdf_for_mineru(pdf_path: Path, *, deep: bool = True) -> PDFValidationResult:
+    """Validate a PDF before submitting it to MinerU.
+
+    The cheap checks always run. When PyMuPDF or pikepdf is available, a deeper
+    open/page-count check catches encrypted or structurally broken PDFs before
+    they reach MinerU.
+    """
+    try:
+        if not pdf_path.exists():
+            return _invalid_pdf(f"file not found: {pdf_path}")
+        if not pdf_path.is_file():
+            return _invalid_pdf(f"not a regular file: {pdf_path}")
+        size = pdf_path.stat().st_size
+    except OSError as exc:
+        return _invalid_pdf(f"cannot stat file: {pdf_path}: {_format_exception(exc)}")
+
+    if size <= 0:
+        return _invalid_pdf(f"file is empty: {pdf_path.name}")
+
+    try:
+        with open(pdf_path, "rb") as fh:
+            header = fh.read(5)
+    except OSError as exc:
+        return _invalid_pdf(f"cannot read file header: {pdf_path.name}: {_format_exception(exc)}")
+
+    if header != b"%PDF-":
+        return _invalid_pdf(f"invalid PDF header: {pdf_path.name}")
+
+    if not deep:
+        return PDFValidationResult(ok=True, deep_checked=False)
+
+    deep_result = _validate_pdf_with_pymupdf(pdf_path)
+    if deep_result is not None:
+        return deep_result
+
+    deep_result = _validate_pdf_with_pikepdf(pdf_path)
+    if deep_result is not None:
+        return deep_result
+
+    _log.warning("cannot deep-check PDF structure (install pymupdf or pikepdf): %s", pdf_path.name)
+    return PDFValidationResult(ok=True, deep_checked=False)
+
+
+def is_pdf_validation_error(result: ConvertResult | None) -> bool:
+    """Return whether a conversion failed before parser submission due to bad input."""
+    return bool(result and result.error_kind == PDF_VALIDATION_ERROR_KIND)
+
+
+def _invalid_pdf(message: str, *, encrypted: bool = False, deep_checked: bool = False) -> PDFValidationResult:
+    return PDFValidationResult(
+        ok=False, error=f"PDF validation failed: {message}", encrypted=encrypted, deep_checked=deep_checked
+    )
+
+
+def _validation_failure_result(pdf_path: Path, validation: PDFValidationResult, started_at: float) -> ConvertResult:
+    return ConvertResult(
+        pdf_path=pdf_path,
+        success=False,
+        error=validation.error or "PDF validation failed",
+        error_kind=PDF_VALIDATION_ERROR_KIND,
+        elapsed_seconds=time.time() - started_at,
+    )
+
+
+def _format_exception(exc: BaseException) -> str:
+    message = str(exc).strip()
+    if not message:
+        message = exc.__class__.__name__
+    return message.splitlines()[0][:200]
+
+
+def _validate_pdf_with_pymupdf(pdf_path: Path) -> PDFValidationResult | None:
+    try:
+        import pymupdf
+    except ImportError:
+        return None
+
+    try:
+        with pymupdf.open(pdf_path) as doc:
+            encrypted = bool(getattr(doc, "needs_pass", False)) or bool(getattr(doc, "is_encrypted", False))
+            if encrypted:
+                return _invalid_pdf(
+                    f"encrypted/password-protected PDF is not supported: {pdf_path.name}",
+                    encrypted=True,
+                    deep_checked=True,
+                )
+            page_count = len(doc)
+    except Exception as exc:
+        return _invalid_pdf(
+            f"cannot open PDF structure: {pdf_path.name}: {_format_exception(exc)}",
+            deep_checked=True,
+        )
+
+    if page_count <= 0:
+        return _invalid_pdf(f"PDF has no pages: {pdf_path.name}", deep_checked=True)
+    return PDFValidationResult(ok=True, page_count=page_count, deep_checked=True)
+
+
+def _validate_pdf_with_pikepdf(pdf_path: Path) -> PDFValidationResult | None:
+    try:
+        import pikepdf
+    except ImportError:
+        return None
+
+    try:
+        with pikepdf.open(pdf_path) as pdf:
+            encrypted = bool(getattr(pdf, "is_encrypted", False))
+            if encrypted:
+                return _invalid_pdf(
+                    f"encrypted/password-protected PDF is not supported: {pdf_path.name}",
+                    encrypted=True,
+                    deep_checked=True,
+                )
+            page_count = len(pdf.pages)
+    except Exception as exc:
+        return _invalid_pdf(
+            f"cannot open PDF structure: {pdf_path.name}: {_format_exception(exc)}",
+            deep_checked=True,
+        )
+
+    if page_count <= 0:
+        return _invalid_pdf(f"PDF has no pages: {pdf_path.name}", deep_checked=True)
+    return PDFValidationResult(ok=True, page_count=page_count, deep_checked=True)
 
 
 def convert_pdf(pdf_path: Path, opts: ConvertOptions) -> ConvertResult:
@@ -230,6 +406,10 @@ def convert_pdf(pdf_path: Path, opts: ConvertOptions) -> ConvertResult:
         result.success = True
         result.md_path = md_path
         return result
+
+    validation = validate_pdf_for_mineru(pdf_path)
+    if not validation.ok:
+        return _validation_failure_result(pdf_path, validation, t0)
 
     # Build multipart form data
     url = f"{opts.api_url}{PARSE_ENDPOINT}"
@@ -298,7 +478,7 @@ def convert_pdf(pdf_path: Path, opts: ConvertOptions) -> ConvertResult:
     if opts.save_content_list:
         cl = _extract_field(data, "content_list")
         if cl:
-            cl_path = out_dir / (pdf_path.stem + "_content_list.json")
+            cl_path = out_dir / f"{_safe_pdf_artifact_stem(pdf_path)}_content_list.json"
             cl_path.write_text(json.dumps(cl, ensure_ascii=False, indent=2), encoding="utf-8")
 
     _log.info("-> %s (%s, %.1fs)", md_path.name, _fmt_size(result.md_size), result.elapsed_seconds)
@@ -359,8 +539,90 @@ def _extract_field(data, field_name):
 # ============================================================================
 
 CLOUD_API_URL = "https://mineru.net/api/v4"
-CLOUD_POLL_INTERVAL = 5  # seconds between status checks
-CLOUD_TIMEOUT = 600  # max wait time for cloud parsing
+MINERU_OPEN_API_BIN = "mineru-open-api"
+
+
+def _cloud_cli_retry_attempts(opts: ConvertOptions) -> int:
+    """Return the number of CLI attempts for MinerU cloud extraction."""
+    return max(1, int(opts.upload_retries or DEFAULT_UPLOAD_RETRIES))
+
+
+def _cloud_safe_pdf_name(pdf_path: Path) -> str:
+    """Return a MinerU-cloud-safe filename without changing the user's file."""
+    original_name = pdf_path.name
+    if (
+        len(original_name) <= CLOUD_SAFE_FILENAME_THRESHOLD
+        and _utf8_size(original_name) <= CLOUD_SAFE_FILENAME_MAX_BYTES
+    ):
+        return original_name
+
+    suffix = pdf_path.suffix or ".pdf"
+    if len(suffix) >= CLOUD_SAFE_FILENAME_MAX_CHARS or _utf8_size(suffix) >= CLOUD_SAFE_FILENAME_MAX_BYTES:
+        suffix = ".pdf"
+    digest = hashlib.md5(original_name.encode("utf-8")).hexdigest()[:16]
+    max_prefix_chars = CLOUD_SAFE_FILENAME_MAX_CHARS - len(suffix) - len(digest) - 1
+    max_prefix_bytes = CLOUD_SAFE_FILENAME_MAX_BYTES - _utf8_size(suffix) - len(digest) - 1
+    prefix = _truncate_utf8_prefix(
+        pdf_path.stem,
+        max_chars=min(CLOUD_SAFE_FILENAME_PREFIX_CHARS, max_prefix_chars),
+        max_bytes=max_prefix_bytes,
+    ).rstrip(" ._-")
+    if not prefix:
+        prefix = _truncate_utf8_prefix("document", max_chars=max_prefix_chars, max_bytes=max_prefix_bytes) or "d"
+    return f"{prefix}-{digest}{suffix}"
+
+
+def _utf8_size(value: str) -> int:
+    return len(value.encode("utf-8"))
+
+
+def _truncate_utf8_prefix(value: str, *, max_chars: int, max_bytes: int) -> str:
+    """Truncate without splitting UTF-8 code points."""
+    if max_chars <= 0 or max_bytes <= 0:
+        return ""
+
+    chars: list[str] = []
+    used_bytes = 0
+    for char in value:
+        if len(chars) >= max_chars:
+            break
+        char_bytes = _utf8_size(char)
+        if used_bytes + char_bytes > max_bytes:
+            break
+        chars.append(char)
+        used_bytes += char_bytes
+    return "".join(chars)
+
+
+def _cloud_safe_pdf_stem(pdf_path: Path) -> str:
+    """Return the stem corresponding to the cloud-safe filename."""
+    return _safe_pdf_artifact_stem(pdf_path)
+
+
+def _safe_pdf_artifact_stem(pdf_path: Path) -> str:
+    """Return a bounded, stable stem for internal artifacts derived from a PDF."""
+    return Path(_cloud_safe_pdf_name(pdf_path)).stem
+
+
+@contextmanager
+def cloud_safe_input_path(pdf_path: Path) -> Iterator[CloudInputAlias]:
+    """Yield a path whose basename is safe for MinerU Cloud's data_id limit."""
+    safe_name = _cloud_safe_pdf_name(pdf_path)
+    if safe_name == pdf_path.name:
+        yield CloudInputAlias(path=pdf_path, output_stem=pdf_path.stem, aliased=False)
+        return
+
+    with tempfile.TemporaryDirectory(prefix="scholaraio-mineru-cloud-") as tmp:
+        alias_path = Path(tmp) / safe_name
+        source_path = pdf_path.resolve()
+        try:
+            os.link(source_path, alias_path)
+        except OSError:
+            try:
+                os.symlink(source_path, alias_path)
+            except OSError:
+                shutil.copy2(source_path, alias_path)
+        yield CloudInputAlias(path=alias_path, output_stem=alias_path.stem, aliased=True)
 
 
 def convert_pdf_cloud(
@@ -370,180 +632,107 @@ def convert_pdf_cloud(
     api_key: str,
     cloud_url: str = CLOUD_API_URL,
 ) -> ConvertResult:
-    """通过 MinerU 云 API 将单个 PDF 转换为 Markdown。
-
-    工作流程: 获取签名上传 URL → PUT 上传 PDF → 轮询解析结果 → 下载 Markdown。
-    本地 MinerU 不可达时作为 :func:`convert_pdf` 的 fallback 使用。
-
-    Args:
-        pdf_path: PDF 文件路径。
-        opts: 转换选项（输出目录、后端、语言等，复用本地 API 的选项结构）。
-        api_key: MinerU 云 API 密钥（Bearer token）。
-        cloud_url: MinerU 云 API 基础 URL，默认 ``https://mineru.net/api/v4``。
-
-    Returns:
-        :class:`ConvertResult` 实例，包含转换结果和状态。
-    """
+    """通过 `mineru-open-api extract` 将单个 PDF 转换为 Markdown。"""
     result = ConvertResult(pdf_path=pdf_path)
     t0 = time.time()
 
     out_dir = opts.output_dir if opts.output_dir else pdf_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
     md_path = out_dir / (pdf_path.stem + ".md")
-    result.md_path = md_path
+    cloud_output_stem = Path(_cloud_safe_pdf_name(pdf_path)).stem
+    existing_md_path = _locate_cloud_markdown_output(out_dir, cloud_output_stem)
+    if existing_md_path is None and cloud_output_stem != pdf_path.stem:
+        existing_md_path = _locate_cloud_markdown_output(out_dir, pdf_path.stem)
+    result.md_path = existing_md_path or md_path
 
     if opts.dry_run:
-        exists_tag = " (exists, would overwrite)" if md_path.exists() else ""
-        _log.debug("dry-run [cloud]: %s%s", md_path.name, exists_tag)
+        display_md_path = existing_md_path or md_path
+        exists_tag = " (exists, would overwrite)" if existing_md_path is not None else ""
+        _log.debug("dry-run [cloud]: %s%s", display_md_path.name, exists_tag)
         result.success = True
         return result
 
-    if md_path.exists() and not opts.force:
-        _log.debug("skip (already exists): %s", md_path.name)
+    if existing_md_path is not None and not opts.force:
+        _log.debug("skip (already exists): %s", existing_md_path.name)
         result.success = True
         return result
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    validation = validate_pdf_for_mineru(pdf_path)
+    if not validation.ok:
+        return _validation_failure_result(pdf_path, validation, t0)
 
-    # Step 1: request signed upload URL
-    data_id = pdf_path.stem
-    payload: dict = {
-        "files": [{"name": pdf_path.name, "data_id": data_id}],
-        "model_version": opts.backend,
-        "enable_formula": opts.formula_enable,
-        "enable_table": opts.table_enable,
-        "language": opts.lang,
-    }
-    if opts.parse_method == "ocr":
-        payload["is_ocr"] = True
-
-    try:
-        resp = requests.post(
-            f"{cloud_url}/file-urls/batch",
-            headers=headers,
-            json=payload,
-            timeout=30,
+    cli_path = shutil.which(MINERU_OPEN_API_BIN)
+    if not cli_path:
+        result.error = (
+            "未找到 mineru-open-api CLI，请先安装：`pip install mineru-open-api`，"
+            "或参考 ModelScope skill / npm / go 安装方式。"
         )
-    except requests.RequestException as e:
-        result.error = f"云 API 请求失败: {e}"
         result.elapsed_seconds = time.time() - t0
         return result
 
-    if resp.status_code != 200:
-        result.error = f"云 API HTTP {resp.status_code}: {resp.text[:200]}"
-        result.elapsed_seconds = time.time() - t0
-        return result
+    with cloud_safe_input_path(pdf_path) as cloud_input:
+        cmd = _build_cloud_cli_command(cli_path, cloud_input.path, out_dir, opts, cloud_url=cloud_url)
+        env = os.environ.copy()
+        if api_key:
+            env["MINERU_TOKEN"] = api_key
 
-    try:
-        resp_data = resp.json()
-    except ValueError:
-        result.error = "云 API 返回非 JSON 响应"
-        result.elapsed_seconds = time.time() - t0
-        return result
-    if resp_data.get("code") != 0:
-        result.error = f"云 API 错误: {resp_data.get('msg', resp.text[:200])}"
-        result.elapsed_seconds = time.time() - t0
-        return result
+        attempts = _cloud_cli_retry_attempts(opts)
+        for attempt in range(1, attempts + 1):
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    cwd=str(cloud_input.path.parent),
+                    env=env,
+                    timeout=max(30, int(opts.poll_timeout or DEFAULT_POLL_TIMEOUT)) + 60,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                result.error = f"mineru-open-api 执行超时: {exc}"
+            except OSError as exc:
+                result.error = f"无法启动 mineru-open-api: {exc}"
+                result.elapsed_seconds = time.time() - t0
+                return result
+            else:
+                if proc.returncode != 0:
+                    detail = (proc.stderr or proc.stdout or "").strip()
+                    result.error = f"mineru-open-api exit code {proc.returncode}: {detail or 'unknown error'}"
+                else:
+                    actual_md_path = _locate_cloud_markdown_output(out_dir, cloud_input.output_stem)
+                    if actual_md_path is None and cloud_input.output_stem != pdf_path.stem:
+                        actual_md_path = _locate_cloud_markdown_output(out_dir, pdf_path.stem)
+                    if actual_md_path is None:
+                        detail = (proc.stderr or proc.stdout or "").strip()
+                        result.error = f"mineru-open-api 未生成 Markdown 输出: {detail or 'missing .md file'}"
+                    else:
+                        result.md_path = actual_md_path
+                        result.success = True
+                        result.md_size = len(actual_md_path.read_bytes())
+                        result.elapsed_seconds = time.time() - t0
+                        _log.info(
+                            "-> [cloud-cli] %s (%s, %.1fs)",
+                            actual_md_path.name,
+                            _fmt_size(result.md_size),
+                            result.elapsed_seconds,
+                        )
+                        return result
 
-    batch_data = resp_data.get("data", {})
-    batch_id = batch_data.get("batch_id", "")
-    file_urls = batch_data.get("file_urls", [])
-    if not file_urls:
-        result.error = "云 API 未返回上传 URL"
-        result.elapsed_seconds = time.time() - t0
-        return result
-
-    # file_urls is a list of URL strings
-    upload_url = file_urls[0] if isinstance(file_urls[0], str) else file_urls[0].get("url", "")
-    if not upload_url:
-        result.error = "云 API 返回的上传 URL 为空"
-        result.elapsed_seconds = time.time() - t0
-        return result
-
-    # Step 2: upload PDF via PUT
-    try:
-        with open(pdf_path, "rb") as f:
-            put_resp = requests.put(
-                upload_url,
-                data=f,
-                timeout=120,
-            )
-        if put_resp.status_code not in (200, 201):
-            result.error = f"PDF 上传失败: HTTP {put_resp.status_code}"
-            result.elapsed_seconds = time.time() - t0
-            return result
-    except requests.RequestException as e:
-        result.error = f"PDF 上传失败: {e}"
-        result.elapsed_seconds = time.time() - t0
-        return result
-
-    _log.debug("PDF uploaded, cloud parsing (batch_id: %s...)", batch_id[:12])
-
-    # Step 3: poll for results
-    poll_headers = {"Authorization": f"Bearer {api_key}"}
-    deadline = time.time() + CLOUD_TIMEOUT
-
-    while time.time() < deadline:
-        time.sleep(CLOUD_POLL_INTERVAL)
-        try:
-            poll_resp = requests.get(
-                f"{cloud_url}/extract-results/batch/{batch_id}",
-                headers=poll_headers,
-                timeout=30,
-            )
-        except requests.RequestException:
-            continue
-
-        if poll_resp.status_code != 200:
-            continue
-
-        try:
-            poll_data = poll_resp.json()
-        except ValueError:
-            continue
-        if poll_data.get("code") != 0:
-            continue
-
-        extract_results = poll_data.get("data", {}).get("extract_result", [])
-        if not extract_results:
-            continue
-
-        item = extract_results[0]
-        state = item.get("state", "")
-
-        if state == "failed":
-            result.error = f"云端解析失败: {item.get('err_msg', 'unknown')}"
-            result.elapsed_seconds = time.time() - t0
-            return result
-
-        if state == "done":
-            md_content = _download_cloud_result(item, out_dir)
-            if md_content is None:
-                result.error = f"无法从云端结果提取 Markdown。响应键: {list(item.keys())}"
+            if attempt >= attempts:
                 result.elapsed_seconds = time.time() - t0
                 return result
 
-            md_path.write_text(md_content, encoding="utf-8")
-            result.success = True
-            result.md_size = len(md_content.encode("utf-8"))
-            result.elapsed_seconds = time.time() - t0
-            _log.info(
-                "-> [cloud] %s (%s, %.1fs)",
-                md_path.name,
-                _fmt_size(result.md_size),
-                result.elapsed_seconds,
+            backoff_seconds = float(2 ** (attempt - 1))
+            _log.warning(
+                "mineru-open-api attempt %d/%d failed for %s: %s; retrying in %.1fs",
+                attempt,
+                attempts,
+                pdf_path.name,
+                result.error,
+                backoff_seconds,
             )
-            return result
+            time.sleep(backoff_seconds)
 
-        if state == "running":
-            extracted = item.get("extracted_pages", "?")
-            total = item.get("total_pages", "?")
-            _log.debug("cloud parsing... %s/%s pages", extracted, total)
-
-    result.error = f"云端解析超时（{CLOUD_TIMEOUT}s）"
     result.elapsed_seconds = time.time() - t0
     return result
 
@@ -559,321 +748,97 @@ def convert_pdfs_cloud_batch(
     cloud_url: str = CLOUD_API_URL,
     batch_size: int = _DEFAULT_CLOUD_BATCH_SIZE,
 ) -> list[ConvertResult]:
-    """通过 MinerU 云 API 批量转换 PDF 为 Markdown。
-
-    所有 PDF 在一个 batch 内提交，并行上传，统一轮询。
-    超过 ``batch_size`` 时自动分批。
-
-    Args:
-        pdf_paths: PDF 文件路径列表。
-        opts: 转换选项。
-        api_key: MinerU 云 API 密钥。
-        cloud_url: MinerU 云 API 基础 URL。
-        batch_size: 每批提交文件数上限，默认 20。可通过
-            ``config.yaml`` 的 ``ingest.mineru_batch_size`` 配置。
-
-    Returns:
-        与 ``pdf_paths`` 等长的 :class:`ConvertResult` 列表。
-    """
+    """通过 `mineru-open-api` 批量转换 PDF 为 Markdown。"""
     if not pdf_paths:
         return []
 
     # Split into chunks
     all_results: list[ConvertResult] = []
     for chunk_start in range(0, len(pdf_paths), batch_size):
-        chunk = pdf_paths[chunk_start : chunk_start + batch_size]
-        chunk_results = _convert_chunk_cloud(chunk, opts, api_key=api_key, cloud_url=cloud_url)
+        indexed_chunk = list(enumerate(pdf_paths[chunk_start : chunk_start + batch_size], start=chunk_start))
+        chunk_results = _convert_chunk_cloud(indexed_chunk, opts, api_key=api_key, cloud_url=cloud_url)
         all_results.extend(chunk_results)
     return all_results
 
 
 def _convert_chunk_cloud(
-    pdf_paths: list[Path],
+    indexed_pdf_paths: list[tuple[int, Path]],
     opts: ConvertOptions,
     *,
     api_key: str,
     cloud_url: str,
 ) -> list[ConvertResult]:
-    """Process a single batch chunk of PDFs via cloud API."""
-    import concurrent.futures
+    """Process a single batch chunk via bounded concurrent CLI invocations."""
+    max_workers = min(len(indexed_pdf_paths), max(1, int(opts.upload_workers or DEFAULT_UPLOAD_WORKERS)))
 
-    t0 = time.time()
-    out_dir = opts.output_dir if opts.output_dir else pdf_paths[0].parent
-    out_dir.mkdir(parents=True, exist_ok=True)
+    def _run_one(item: tuple[int, Path]) -> ConvertResult:
+        global_idx, pdf_path = item
+        item_opts = opts
+        if opts.output_dir is not None:
+            item_opts = replace(opts, output_dir=opts.output_dir / f"{global_idx:04d}_{_cloud_safe_pdf_stem(pdf_path)}")
+        return convert_pdf_cloud(pdf_path, item_opts, api_key=api_key, cloud_url=cloud_url)
 
-    # Build per-file results and output paths
-    results: dict[str, ConvertResult] = {}
-    data_id_to_path: dict[str, Path] = {}
-    files_payload = []
-
-    for pdf_path in pdf_paths:
-        data_id = pdf_path.stem
-        md_path = out_dir / (pdf_path.stem + ".md")
-        result = ConvertResult(pdf_path=pdf_path, md_path=md_path)
-
-        if md_path.exists() and not opts.force:
-            _log.debug("skip (already exists): %s", md_path.name)
-            result.success = True
-            results[data_id] = result
-            continue
-
-        results[data_id] = result
-        data_id_to_path[data_id] = pdf_path
-        files_payload.append({"name": pdf_path.name, "data_id": data_id})
-
-    if not files_payload:
-        return list(results.values())
-
-    # Step 1: request signed upload URLs for all files
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload: dict = {
-        "files": files_payload,
-        "model_version": opts.backend,
-        "enable_formula": opts.formula_enable,
-        "enable_table": opts.table_enable,
-        "language": opts.lang,
-    }
-    if opts.parse_method == "ocr":
-        payload["is_ocr"] = True
-
-    try:
-        resp = requests.post(
-            f"{cloud_url}/file-urls/batch",
-            headers=headers,
-            json=payload,
-            timeout=30,
-        )
-    except requests.RequestException as e:
-        for did in data_id_to_path:
-            results[did].error = f"云 API 请求失败: {e}"
-            results[did].elapsed_seconds = time.time() - t0
-        return list(results.values())
-
-    if resp.status_code != 200:
-        for did in data_id_to_path:
-            results[did].error = f"云 API HTTP {resp.status_code}: {resp.text[:200]}"
-            results[did].elapsed_seconds = time.time() - t0
-        return list(results.values())
-
-    try:
-        resp_data = resp.json()
-    except ValueError:
-        for did in data_id_to_path:
-            results[did].error = "云 API 返回非 JSON 响应"
-            results[did].elapsed_seconds = time.time() - t0
-        return list(results.values())
-
-    if resp_data.get("code") != 0:
-        for did in data_id_to_path:
-            results[did].error = f"云 API 错误: {resp_data.get('msg', resp.text[:200])}"
-            results[did].elapsed_seconds = time.time() - t0
-        return list(results.values())
-
-    batch_data = resp_data.get("data", {})
-    batch_id = batch_data.get("batch_id", "")
-    file_urls = batch_data.get("file_urls", [])
-
-    if len(file_urls) != len(files_payload):
-        for did in data_id_to_path:
-            results[did].error = f"云 API 返回 URL 数量不匹配: {len(file_urls)} vs {len(files_payload)}"
-            results[did].elapsed_seconds = time.time() - t0
-        return list(results.values())
-
-    # Step 2: parallel upload all PDFs
-    ordered_data_ids = [f["data_id"] for f in files_payload]
-
-    def _upload_one(idx: int) -> str | None:
-        did = ordered_data_ids[idx]
-        url = file_urls[idx] if isinstance(file_urls[idx], str) else file_urls[idx].get("url", "")
-        pdf_path = data_id_to_path[did]
-        try:
-            with open(pdf_path, "rb") as f:
-                put_resp = requests.put(url, data=f, timeout=120)
-            if put_resp.status_code not in (200, 201):
-                return f"HTTP {put_resp.status_code}"
-        except requests.RequestException as e:
-            return str(e)
-        return None
-
-    _log.info("Uploading %d PDFs to MinerU cloud (batch %s)...", len(files_payload), batch_id[:12])
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        upload_errors = list(pool.map(_upload_one, range(len(files_payload))))
-
-    for idx, err in enumerate(upload_errors):
-        if err:
-            did = ordered_data_ids[idx]
-            results[did].error = f"PDF 上传失败: {err}"
-            results[did].elapsed_seconds = time.time() - t0
-
-    pending_ids = {did for idx, did in enumerate(ordered_data_ids) if not upload_errors[idx]}
-    if not pending_ids:
-        return list(results.values())
-
-    _log.info("All uploaded, waiting for cloud parsing (%d files)...", len(pending_ids))
-
-    # Step 3: poll for all results
-    poll_headers = {"Authorization": f"Bearer {api_key}"}
-    deadline = time.time() + CLOUD_TIMEOUT
-    done_ids: set[str] = set()
-
-    while time.time() < deadline and done_ids != pending_ids:
-        time.sleep(CLOUD_POLL_INTERVAL)
-        try:
-            poll_resp = requests.get(
-                f"{cloud_url}/extract-results/batch/{batch_id}",
-                headers=poll_headers,
-                timeout=30,
-            )
-        except requests.RequestException:
-            continue
-
-        if poll_resp.status_code != 200:
-            continue
-        try:
-            poll_data = poll_resp.json()
-        except ValueError:
-            continue
-        if poll_data.get("code") != 0:
-            continue
-
-        extract_results = poll_data.get("data", {}).get("extract_result", [])
-        running_count = 0
-        for item in extract_results:
-            did = item.get("data_id", "")
-            if did not in pending_ids or did in done_ids:
-                continue
-            state = item.get("state", "")
-
-            if state == "done":
-                # Per-file output dir for images etc.
-                file_out_dir = out_dir / did
-                file_out_dir.mkdir(parents=True, exist_ok=True)
-                md_content = _download_cloud_result(item, file_out_dir)
-                if md_content is None:
-                    results[did].error = "无法从云端结果提取 Markdown"
-                else:
-                    md_path = results[did].md_path
-                    md_path.write_text(md_content, encoding="utf-8")
-                    # Move assets from per-file subdir to out_dir (flat)
-                    _flatten_assets(file_out_dir, out_dir, did)
-                    results[did].success = True
-                    results[did].md_size = len(md_content.encode("utf-8"))
-                    _log.info(
-                        "-> [cloud] %s (%s)",
-                        md_path.name,
-                        _fmt_size(results[did].md_size),
-                    )
-                results[did].elapsed_seconds = time.time() - t0
-                done_ids.add(did)
-
-            elif state == "failed":
-                results[did].error = f"云端解析失败: {item.get('err_msg', 'unknown')}"
-                results[did].elapsed_seconds = time.time() - t0
-                done_ids.add(did)
-
-            elif state == "running":
-                running_count += 1
-
-        if running_count and not done_ids - pending_ids:
-            done_count = len(done_ids)
-            _log.info("Cloud parsing: %d/%d done, %d running...", done_count, len(pending_ids), running_count)
-
-    # Mark timed-out files
-    for did in pending_ids - done_ids:
-        results[did].error = f"云端解析超时（{CLOUD_TIMEOUT}s）"
-        results[did].elapsed_seconds = time.time() - t0
-
-    elapsed = time.time() - t0
-    ok = sum(1 for did in pending_ids if results[did].success)
-    _log.info("Batch done: %d/%d succeeded (%.1fs total)", ok, len(pending_ids), elapsed)
-
-    return list(results.values())
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        return list(pool.map(_run_one, indexed_pdf_paths))
 
 
-def _flatten_assets(src_dir: Path, out_dir: Path, data_id: str) -> None:
-    """Move images/ and other assets from per-file subdir to out_dir, namespaced by data_id."""
-    images_src = src_dir / "images"
-    if images_src.is_dir():
-        # Move entire images dir, namespaced to avoid collisions
-        images_dst = out_dir / f"{data_id}_images"
-        if images_dst.exists():
-            import shutil
+def _build_cloud_cli_command(
+    cli_path: str,
+    pdf_path: Path,
+    out_dir: Path,
+    opts: ConvertOptions,
+    *,
+    cloud_url: str,
+) -> list[str]:
+    """Build the `mineru-open-api extract` command for a single PDF."""
+    model_version = _resolve_cloud_model_version(opts)
+    model_flag = "html" if model_version == "MinerU-HTML" else model_version
+    timeout = max(1, int(opts.poll_timeout or DEFAULT_POLL_TIMEOUT))
 
-            shutil.rmtree(str(images_dst))
-        images_src.rename(images_dst)
+    cmd = [
+        cli_path,
+        "extract",
+        str(pdf_path),
+        "-o",
+        str(out_dir),
+        "--language",
+        opts.lang,
+        "--model",
+        model_flag,
+    ]
+    if model_version in PDF_CLOUD_MODEL_VERSIONS:
+        if opts.parse_method == "ocr":
+            cmd.append("--ocr")
+        elif opts.parse_method == "txt":
+            _log.warning("mineru-open-api extract has no txt-only mode; parse_method=txt is treated as default mode")
+        cmd.append(f"--formula={'true' if opts.formula_enable else 'false'}")
+        cmd.append(f"--table={'true' if opts.table_enable else 'false'}")
+    elif opts.parse_method in {"ocr", "txt"}:
+        _log.warning("MinerU cloud model_version=%s ignores parse_method=%s", model_version, opts.parse_method)
 
-    # Move other assets (layout.json, content_list.json, origin.pdf)
-    for f in src_dir.iterdir():
-        if f.is_file():
-            dest = out_dir / f"{data_id}_{f.name}"
-            f.rename(dest)
-
-    # Clean up empty subdir
-    try:
-        src_dir.rmdir()
-    except OSError:
-        pass
+    cmd.extend(["--timeout", str(timeout)])
+    if cloud_url and cloud_url.rstrip("/") != CLOUD_API_URL.rstrip("/"):
+        cmd.extend(["--base-url", cloud_url])
+    return cmd
 
 
-def _download_cloud_result(item: dict, out_dir: Path) -> str | None:
-    """Download markdown (and images) from cloud API result.
+def _locate_cloud_markdown_output(out_dir: Path, stem: str) -> Path | None:
+    """Locate the markdown file produced by `mineru-open-api`."""
+    candidates = [
+        out_dir / f"{stem}.md",
+        out_dir / stem / f"{stem}.md",
+        out_dir / stem / "index.md",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
 
-    Tries multiple response formats: direct md_content field,
-    full_zip_url (download zip and extract all files), or md_url.
-
-    CDN download bypasses HTTP proxy (domestic CDN + proxy = SSL errors).
-
-    Args:
-        item: Single extract result dict from cloud API.
-        out_dir: Directory to extract images and other assets into.
-
-    Returns:
-        Markdown text, or ``None`` on failure.
-    """
-    # Direct markdown content
-    md = item.get("md_content")
-    if isinstance(md, str) and md.strip():
-        return md
-
-    # Download zip and extract all files (md + images/)
-    zip_url = item.get("full_zip_url")
-    if zip_url:
-        try:
-            import io
-            import zipfile
-
-            # Bypass proxy for CDN downloads (domestic CDN through proxy causes SSL errors)
-            resp = requests.get(zip_url, timeout=120, proxies={"http": None, "https": None})
-            if resp.status_code == 200:
-                md_content = None
-                with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-                    for name in zf.namelist():
-                        if name.endswith("/"):
-                            continue
-                        if name.endswith(".md"):
-                            md_content = zf.read(name).decode("utf-8")
-                        else:
-                            # Extract all assets (images/, layout.json, etc.)
-                            dest = out_dir / name
-                            dest.parent.mkdir(parents=True, exist_ok=True)
-                            dest.write_bytes(zf.read(name))
-                return md_content
-        except Exception as e:
-            _log.debug("failed to download/extract zip result: %s", e)
-
-    # Direct markdown URL
-    md_url = item.get("md_url")
-    if md_url:
-        try:
-            resp = requests.get(md_url, timeout=60, proxies={"http": None, "https": None})
-            if resp.status_code == 200:
-                return resp.text
-        except Exception as e:
-            _log.debug("failed to download markdown from %s: %s", md_url, e)
-
+    matches = sorted(path for path in out_dir.rglob("*.md") if path.is_file())
+    for match in matches:
+        if match.stem == stem:
+            return match
+        if match.stem == "index" and match.parent.name == stem:
+            return match
     return None
 
 
@@ -903,6 +868,59 @@ def _find_pdfs(dirpath: Path, recursive: bool = False) -> list[Path]:
 # ============================================================================
 
 DEFAULT_CHUNK_PAGES = 100
+MINERU_CLOUD_MAX_PAGES = 600
+MINERU_CLOUD_MAX_BYTES = 200 * 1024 * 1024
+
+
+def _get_pdf_size_bytes(pdf_path: Path) -> int:
+    """Return file size in bytes, or -1 when unavailable."""
+    try:
+        return pdf_path.stat().st_size
+    except OSError:
+        return -1
+
+
+def _fmt_mb(nbytes: int) -> str:
+    """Format bytes as MB with one decimal place."""
+    return f"{nbytes / (1024 * 1024):.1f} MB"
+
+
+def _plan_cloud_chunking(
+    pdf_path: Path,
+    *,
+    default_chunk_size: int = DEFAULT_CHUNK_PAGES,
+    max_pages: int = MINERU_CLOUD_MAX_PAGES,
+    max_bytes: int = MINERU_CLOUD_MAX_BYTES,
+) -> tuple[bool, int, str]:
+    """Decide whether MinerU cloud CLI should split a PDF and choose a chunk size.
+
+    Cloud extraction supports up to ``max_pages`` pages and ``max_bytes`` per document.
+    When only the file size is too large, estimate a page-based chunk size from the
+    average bytes per page. If page count is unavailable, fall back to
+    ``default_chunk_size``.
+    """
+    page_count = _get_pdf_page_count(pdf_path)
+    size_bytes = _get_pdf_size_bytes(pdf_path)
+
+    reasons: list[str] = []
+    if page_count > max_pages:
+        reasons.append(f"{page_count} pages > {max_pages}")
+    if size_bytes > max_bytes:
+        reasons.append(f"{_fmt_mb(size_bytes)} > {_fmt_mb(max_bytes)}")
+
+    if not reasons:
+        return False, max_pages, ""
+
+    chunk_size = max_pages
+    if size_bytes > max_bytes and page_count > 0:
+        avg_bytes_per_page = size_bytes / page_count
+        if avg_bytes_per_page > 0:
+            size_bound_pages = max(1, int(max_bytes // avg_bytes_per_page))
+            chunk_size = min(chunk_size, size_bound_pages)
+    elif size_bytes > max_bytes:
+        chunk_size = min(max_pages, max(1, default_chunk_size))
+
+    return True, max(1, chunk_size), "; ".join(reasons)
 
 
 def _get_pdf_page_count(pdf_path: Path) -> int:
@@ -913,21 +931,13 @@ def _get_pdf_page_count(pdf_path: Path) -> int:
     Returns:
         Page count, or -1 if unable to determine.
     """
-    try:
-        import pymupdf
-
-        with pymupdf.open(pdf_path) as doc:
-            return len(doc)
-    except ImportError:
-        pass
-    try:
-        import pikepdf
-
-        with pikepdf.open(pdf_path) as pdf:
-            return len(pdf.pages)
-    except ImportError:
-        pass
-    _log.warning("cannot detect page count (install pymupdf or pikepdf): %s", pdf_path.name)
+    validation = validate_pdf_for_mineru(pdf_path)
+    if validation.ok and validation.page_count is not None:
+        return validation.page_count
+    if validation.ok:
+        _log.warning("cannot detect page count (install pymupdf or pikepdf): %s", pdf_path.name)
+    else:
+        _log.warning("cannot detect page count: %s", validation.error)
     return -1
 
 
@@ -947,21 +957,22 @@ def _split_pdf(pdf_path: Path, chunk_size: int = DEFAULT_CHUNK_PAGES, output_dir
     try:
         import pymupdf
     except ImportError:
-        raise ImportError("pymupdf is required for splitting long PDFs. Install it with: pip install pymupdf")
+        raise ImportError("pymupdf is required for splitting long PDFs. Install it with: pip install scholaraio[pdf]")
 
     page_count = _get_pdf_page_count(pdf_path)
     if page_count <= chunk_size:
         return [pdf_path]
 
+    artifact_stem = _safe_pdf_artifact_stem(pdf_path)
     if output_dir is None:
-        output_dir = pdf_path.parent / f".{pdf_path.stem}_chunks"
+        output_dir = pdf_path.parent / f".{artifact_stem}_chunks"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     chunks: list[Path] = []
     with pymupdf.open(pdf_path) as src_doc:
         for start in range(0, page_count, chunk_size):
             end = min(start + chunk_size, page_count)  # exclusive
-            chunk_name = f"{pdf_path.stem}_p{start:04d}-{end - 1:04d}.pdf"
+            chunk_name = f"{artifact_stem}_p{start:04d}-{end - 1:04d}.pdf"
             chunk_path = output_dir / chunk_name
 
             if chunk_path.exists():
@@ -1069,13 +1080,34 @@ def _merge_chunk_results(
     return merged
 
 
+def _resolve_cloud_model_version(opts: ConvertOptions) -> str:
+    """Resolve cloud ``model_version`` from options with backward compatibility."""
+    model_version = (opts.cloud_model_version or "").strip()
+    if model_version in VALID_CLOUD_MODEL_VERSIONS:
+        return model_version
+
+    # Backward-compatible fallback from local-style backend names.
+    if opts.backend in {"vlm-auto-engine", "vlm-http-client", "vlm"}:
+        return "vlm"
+    if opts.backend in {"pipeline", "hybrid-auto-engine", "hybrid-http-client"}:
+        return "pipeline"
+
+    _log.warning("unknown cloud model_version/backend '%s', fallback to pipeline", model_version or opts.backend)
+    return "pipeline"
+
+
 def _convert_long_pdf(pdf_path: Path, opts: ConvertOptions, chunk_size: int = DEFAULT_CHUNK_PAGES) -> ConvertResult:
     """Handle a long PDF: split → convert each chunk → merge results.
 
     Uses the local MinerU API for each chunk sequentially.
     """
+    t0 = time.time()
+    validation = validate_pdf_for_mineru(pdf_path)
+    if not validation.ok:
+        return _validation_failure_result(pdf_path, validation, t0)
+
     out_dir = opts.output_dir if opts.output_dir else pdf_path.parent
-    chunks_dir = out_dir / f".{pdf_path.stem}_chunks"
+    chunks_dir = out_dir / f".{_safe_pdf_artifact_stem(pdf_path)}_chunks"
 
     chunk_paths = _split_pdf(pdf_path, chunk_size=chunk_size, output_dir=chunks_dir)
 
@@ -1093,6 +1125,10 @@ def _convert_long_pdf(pdf_path: Path, opts: ConvertOptions, chunk_size: int = DE
             save_content_list=opts.save_content_list,
             force=opts.force,
             dry_run=opts.dry_run,
+            upload_workers=opts.upload_workers,
+            upload_retries=opts.upload_retries,
+            download_retries=opts.download_retries,
+            poll_timeout=opts.poll_timeout,
         )
         cr = convert_pdf(chunk_pdf, chunk_opts)
         chunk_results.append(cr)
@@ -1114,20 +1150,30 @@ def _convert_long_pdf_cloud(
     cloud_url: str,
     chunk_size: int = DEFAULT_CHUNK_PAGES,
 ) -> ConvertResult:
-    """Handle a long PDF via cloud API: split → batch upload → merge."""
+    """Handle a long PDF via MinerU cloud CLI: split → convert → merge."""
+    t0 = time.time()
+    validation = validate_pdf_for_mineru(pdf_path)
+    if not validation.ok:
+        return _validation_failure_result(pdf_path, validation, t0)
+
     out_dir = opts.output_dir if opts.output_dir else pdf_path.parent
-    chunks_dir = out_dir / f".{pdf_path.stem}_chunks"
+    chunks_dir = out_dir / f".{_safe_pdf_artifact_stem(pdf_path)}_chunks"
 
     chunk_paths = _split_pdf(pdf_path, chunk_size=chunk_size, output_dir=chunks_dir)
 
     chunk_opts = ConvertOptions(
         output_dir=chunks_dir,
         backend=opts.backend,
+        cloud_model_version=opts.cloud_model_version,
         lang=opts.lang,
         parse_method=opts.parse_method,
         formula_enable=opts.formula_enable,
         table_enable=opts.table_enable,
         save_content_list=opts.save_content_list,
+        upload_workers=opts.upload_workers,
+        upload_retries=opts.upload_retries,
+        download_retries=opts.download_retries,
+        poll_timeout=opts.poll_timeout,
     )
     batch_results = convert_pdfs_cloud_batch(
         chunk_paths,

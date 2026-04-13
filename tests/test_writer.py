@@ -11,6 +11,7 @@ from scholaraio.ingest.metadata._writer import (
     _strip_diacritics,
     generate_new_stem,
     metadata_to_dict,
+    refetch_metadata,
     rename_paper,
 )
 
@@ -257,6 +258,120 @@ class TestRenamePaper:
         (correct_dir / "meta.json").write_text(json.dumps(meta))
         result = rename_paper(correct_dir / "meta.json")
         assert result is None  # no change needed
+
+
+class TestRefetchMetadata:
+    def test_refetch_persists_year_only_change(self, tmp_path, monkeypatch):
+        paper_dir = tmp_path / "papers" / "Zhang-2021-Test"
+        paper_dir.mkdir(parents=True)
+        json_path = paper_dir / "meta.json"
+        json_path.write_text(
+            json.dumps(
+                {
+                    "id": "paper-1",
+                    "title": "Test Paper",
+                    "authors": ["Alice Smith"],
+                    "first_author": "Alice Smith",
+                    "first_author_lastname": "Smith",
+                    "year": 2021,
+                    "doi": "",
+                    "journal": "",
+                    "abstract": "Old abstract",
+                    "paper_type": "preprint",
+                    "citation_count": {"semantic_scholar": 0},
+                    "ids": {"arxiv": "2603.25200"},
+                    "api_sources": ["semantic_scholar"],
+                    "references": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def fake_enrich(meta):
+            meta.year = 2026
+            return meta
+
+        monkeypatch.setattr("scholaraio.ingest.metadata._api.enrich_metadata", fake_enrich)
+
+        changed = refetch_metadata(json_path)
+
+        assert changed is True
+        meta_files = list((tmp_path / "papers").glob("*/meta.json"))
+        assert len(meta_files) == 1
+        data = json.loads(meta_files[0].read_text(encoding="utf-8"))
+        assert data["year"] == 2026
+
+    def test_refetch_keeps_existing_api_state_when_all_lookups_fail(self, tmp_path, monkeypatch):
+        paper_dir = tmp_path / "papers" / "Smith-2024-Test-Paper"
+        paper_dir.mkdir(parents=True)
+        json_path = paper_dir / "meta.json"
+        original = {
+            "id": "paper-1",
+            "title": "Test Paper",
+            "authors": ["Alice Smith"],
+            "first_author": "Alice Smith",
+            "first_author_lastname": "Smith",
+            "year": 2024,
+            "doi": "10.1234/test",
+            "journal": "JFM",
+            "abstract": "Old abstract",
+            "paper_type": "article",
+            "citation_count": {"crossref": 5, "semantic_scholar": 7},
+            "ids": {"doi": "10.1234/test", "semantic_scholar": "s2-1"},
+            "api_sources": ["crossref", "semantic_scholar"],
+            "references": ["10.9999/ref"],
+        }
+        json_path.write_text(json.dumps(original), encoding="utf-8")
+
+        def fake_enrich(meta):
+            meta.extraction_method = "local_only"
+            return meta
+
+        monkeypatch.setattr("scholaraio.ingest.metadata._api.enrich_metadata", fake_enrich)
+
+        changed = refetch_metadata(json_path)
+
+        assert changed is False
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+        assert data["citation_count"] == original["citation_count"]
+        assert data["api_sources"] == original["api_sources"]
+
+    def test_refetch_keeps_existing_citation_state_when_only_arxiv_metadata_survives(self, tmp_path, monkeypatch):
+        paper_dir = tmp_path / "papers" / "Smith-2024-Test-Paper"
+        paper_dir.mkdir(parents=True)
+        json_path = paper_dir / "meta.json"
+        original = {
+            "id": "paper-1",
+            "title": "Test Paper",
+            "authors": ["Alice Smith"],
+            "first_author": "Alice Smith",
+            "first_author_lastname": "Smith",
+            "year": 2024,
+            "doi": "",
+            "arxiv_id": "hep-th/9901001",
+            "journal": "arXiv",
+            "abstract": "Old abstract",
+            "paper_type": "article",
+            "citation_count": {"crossref": 5, "semantic_scholar": 7},
+            "ids": {"arxiv": "hep-th/9901001", "semantic_scholar": "s2-1"},
+            "api_sources": ["arxiv", "semantic_scholar"],
+            "references": ["10.9999/ref"],
+        }
+        json_path.write_text(json.dumps(original), encoding="utf-8")
+
+        def fake_enrich(meta):
+            meta.api_sources = ["arxiv"]
+            meta.extraction_method = "arxiv_lookup"
+            return meta
+
+        monkeypatch.setattr("scholaraio.ingest.metadata._api.enrich_metadata", fake_enrich)
+
+        changed = refetch_metadata(json_path)
+
+        assert changed is False
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+        assert data["citation_count"] == original["citation_count"]
+        assert data["api_sources"] == original["api_sources"]
 
     def test_rename_collision_avoidance(self, tmp_path):
         papers = tmp_path / "papers"

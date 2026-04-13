@@ -8,6 +8,11 @@ translate.py — 论文 Markdown 自动翻译
 翻译结果保存为 ``paper_{lang}.md``（如 ``paper_zh.md``），
 原文 ``paper.md`` 保持不变。
 
+单篇翻译会按 ``config.translate.concurrency`` 并发请求多个分块，
+将中间结果持久化到临时工作目录，并按原顺序推进最终输出。
+当启用 portable 导出时，还会额外生成
+``workspace/translation-ws/<paper-dir>/`` 可移植包。
+
 用法：
     from scholaraio.translate import translate_paper, batch_translate
     translate_paper(paper_dir, config)
@@ -16,12 +21,18 @@ translate.py — 论文 Markdown 自动翻译
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
+import shutil
+import time
+from collections.abc import Callable
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from scholaraio.config import Config
@@ -319,6 +330,13 @@ SKIP_NO_MD = "no_paper_md"
 SKIP_ALREADY_EXISTS = "already_exists"
 SKIP_EMPTY = "empty_source"
 SKIP_SAME_LANG = "same_language"
+SKIP_ALL_CHUNKS_FAILED = "all_chunks_failed"
+
+CHUNK_STATUS_PENDING = "pending"
+CHUNK_STATUS_SUCCESS = "success"
+CHUNK_STATUS_FAILED = "failed"
+DEFAULT_TRANSLATE_MAX_ATTEMPTS = 5
+DEFAULT_TRANSLATE_BACKOFF_BASE = 1.0
 
 
 def validate_lang(lang: str) -> str:
@@ -345,18 +363,253 @@ class TranslateResult:
 
     Attributes:
         path: Path to the translated file, or ``None`` if skipped/failed.
+        portable_path: Path to the optional portable bundle markdown, or ``None``.
         skip_reason: Why the translation was skipped (one of ``SKIP_*`` constants),
             or empty string if translated successfully.
-        partial: ``True`` when some chunks failed and the output is mixed-language.
+        partial: ``True`` when translation was interrupted after some chunks were
+            written, so the output is resumable but incomplete.
     """
 
     path: Path | None = None
+    portable_path: Path | None = None
     skip_reason: str = ""
     partial: bool = False
+    completed_chunks: int = 0
+    total_chunks: int = 0
 
     @property
     def ok(self) -> bool:
-        return self.path is not None
+        return self.path is not None and not self.partial
+
+
+def _translation_workdir(paper_dir: Path, lang: str) -> Path:
+    return paper_dir / f".translate_{lang}"
+
+
+def _source_digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _write_json_atomic(path: Path, payload: dict) -> None:
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def _write_translated_output(out_path: Path, translated_chunks: list[str]) -> None:
+    out_path.write_text("\n\n".join(translated_chunks), encoding="utf-8")
+
+
+def _translation_state_path(workdir: Path) -> Path:
+    return workdir / "state.json"
+
+
+def _translation_chunks_path(workdir: Path) -> Path:
+    return workdir / "chunks.json"
+
+
+def _translation_parts_dir(workdir: Path) -> Path:
+    return workdir / "parts"
+
+
+def _translation_part_path(workdir: Path, index: int) -> Path:
+    return _translation_parts_dir(workdir) / f"{index + 1:06d}.md"
+
+
+def _load_translation_state(state_path: Path) -> dict | None:
+    if not state_path.exists():
+        return None
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _build_chunk_digests(chunks: list[str]) -> list[str]:
+    return [hashlib.sha256(chunk.encode("utf-8")).hexdigest() for chunk in chunks]
+
+
+def _write_chunk_part(part_path: Path, text: str) -> None:
+    part_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = part_path.with_suffix(".md.tmp")
+    tmp_path.write_text(text, encoding="utf-8")
+    tmp_path.replace(part_path)
+
+
+def _build_translation_state(
+    workdir: Path,
+    *,
+    lang: str,
+    source_digest: str,
+    chunk_size: int,
+    chunk_digests: list[str],
+) -> dict:
+    _translation_parts_dir(workdir).mkdir(parents=True, exist_ok=True)
+    chunks_meta = []
+    for idx in range(len(chunk_digests)):
+        chunks_meta.append(
+            {
+                "index": idx,
+                "status": CHUNK_STATUS_PENDING,
+                "attempts": 0,
+                "error": "",
+                "part": f"parts/{idx + 1:06d}.md",
+            }
+        )
+    return {
+        "target_lang": lang,
+        "source_digest": source_digest,
+        "chunk_size": chunk_size,
+        "total_chunks": len(chunk_digests),
+        "chunk_digests": chunk_digests,
+        "chunks": chunks_meta,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def _write_translation_workspace_files(workdir: Path, state: dict, chunks: list[str]) -> None:
+    chunk_digests = state["chunk_digests"]
+    _write_json_atomic(
+        _translation_chunks_path(workdir),
+        {
+            "target_lang": state["target_lang"],
+            "source_digest": state["source_digest"],
+            "chunk_size": state["chunk_size"],
+            "total_chunks": state["total_chunks"],
+            "chunks": [
+                {
+                    "index": idx,
+                    "chars": len(chunk),
+                    "digest": chunk_digests[idx],
+                }
+                for idx, chunk in enumerate(chunks)
+            ],
+        },
+    )
+    state["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _write_json_atomic(_translation_state_path(workdir), state)
+
+
+def _load_or_init_translation_workspace(
+    paper_dir: Path,
+    *,
+    lang: str,
+    force: bool,
+    out_path: Path,
+    source_digest: str,
+    chunk_size: int,
+    chunks: list[str],
+) -> dict:
+    workdir = _translation_workdir(paper_dir, lang)
+    if force:
+        shutil.rmtree(workdir, ignore_errors=True)
+        out_path.unlink(missing_ok=True)
+
+    chunk_digests = _build_chunk_digests(chunks)
+    state = _load_translation_state(_translation_state_path(workdir))
+    is_valid = (
+        isinstance(state, dict)
+        and state.get("target_lang") == lang
+        and state.get("source_digest") == source_digest
+        and state.get("chunk_size") == chunk_size
+        and state.get("total_chunks") == len(chunks)
+        and state.get("chunk_digests") == chunk_digests
+        and isinstance(state.get("chunks"), list)
+        and len(state["chunks"]) == len(chunks)
+    )
+    if is_valid:
+        return cast(dict, state)
+
+    shutil.rmtree(workdir, ignore_errors=True)
+    workdir.mkdir(parents=True, exist_ok=True)
+    state = _build_translation_state(
+        workdir,
+        lang=lang,
+        source_digest=source_digest,
+        chunk_size=chunk_size,
+        chunk_digests=chunk_digests,
+    )
+    _write_translation_workspace_files(workdir, state, chunks)
+    return state
+
+
+def _load_success_prefix(workdir: Path, state: dict) -> list[str]:
+    translated_chunks: list[str] = []
+    for idx, entry in enumerate(state.get("chunks", [])):
+        if entry.get("status") != CHUNK_STATUS_SUCCESS:
+            break
+        part_path = _translation_part_path(workdir, idx)
+        if not part_path.exists():
+            break
+        translated_chunks.append(part_path.read_text(encoding="utf-8"))
+    return translated_chunks
+
+
+def _persist_prefix_output(out_path: Path, translated_chunks: list[str]) -> None:
+    if translated_chunks:
+        _write_translated_output(out_path, translated_chunks)
+    else:
+        out_path.unlink(missing_ok=True)
+
+
+def _translate_chunk_with_retry(
+    text: str,
+    target_lang: str,
+    config: Config,
+    *,
+    timeout: int | None = None,
+    max_attempts: int = DEFAULT_TRANSLATE_MAX_ATTEMPTS,
+    backoff_base: float = DEFAULT_TRANSLATE_BACKOFF_BASE,
+) -> tuple[str, int]:
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            if timeout is None:
+                return _translate_chunk(text, target_lang, config), attempts
+            return _translate_chunk(text, target_lang, config, timeout=timeout), attempts
+        except Exception:
+            if attempts >= max_attempts:
+                raise
+            time.sleep(backoff_base * (2 ** (attempts - 1)))
+
+
+def _portable_bundle_dir(config: Config, paper_dir: Path) -> Path:
+    """Return the portable bundle directory for a paper."""
+    workspace_dir = getattr(config, "workspace_dir", None)
+    if workspace_dir is None:
+        workspace_dir = paper_dir.parent.parent / "workspace"
+    return Path(workspace_dir) / "translation-ws" / paper_dir.name
+
+
+def _write_portable_translation_bundle(config: Config, paper_dir: Path, out_path: Path) -> Path:
+    """Create a portable translation bundle under ``workspace/translation-ws/<paper>/``.
+
+    The translated markdown is copied to
+    ``workspace/translation-ws/<paper>/<paper_{lang}.md>`` and any sibling
+    ``images/`` directory is copied to ``workspace/translation-ws/<paper>/images/``
+    so relative image links remain valid when the bundle is moved elsewhere.
+    """
+    bundle_dir = _portable_bundle_dir(config, paper_dir)
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+
+    portable_path = bundle_dir / out_path.name
+    shutil.copy2(out_path, portable_path)
+
+    src_images = paper_dir / "images"
+    if src_images.is_dir():
+        dst_images = bundle_dir / "images"
+        for src in src_images.rglob("*"):
+            rel = src.relative_to(src_images)
+            dst = dst_images / rel
+            if src.is_dir():
+                dst.mkdir(parents=True, exist_ok=True)
+            else:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+
+    return portable_path
 
 
 def translate_paper(
@@ -365,6 +618,9 @@ def translate_paper(
     *,
     target_lang: str | None = None,
     force: bool = False,
+    portable: bool = False,
+    chunk_workers: int | None = None,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> TranslateResult:
     """Translate a paper's markdown to the target language.
 
@@ -380,17 +636,19 @@ def translate_paper(
     Returns:
         :class:`TranslateResult` with ``path`` (or ``None``) and ``skip_reason``.
     """
+
+    def report(message: str) -> None:
+        if progress_callback is not None:
+            progress_callback(message)
+
     lang = validate_lang(target_lang or config.translate.target_lang)
     md_path = paper_dir / "paper.md"
     out_path = paper_dir / f"paper_{lang}.md"
+    workdir = _translation_workdir(paper_dir, lang)
 
     if not md_path.exists():
         _log.debug("no paper.md in %s, skipping", paper_dir.name)
         return TranslateResult(skip_reason=SKIP_NO_MD)
-
-    if out_path.exists() and not force:
-        _log.debug("translation already exists: %s", out_path.name)
-        return TranslateResult(skip_reason=SKIP_ALREADY_EXISTS)
 
     text = md_path.read_text(encoding="utf-8", errors="replace")
     if not text.strip():
@@ -405,37 +663,117 @@ def translate_paper(
     # Chunk and translate
     chunk_size = config.translate.chunk_size
     chunks = _split_into_chunks(text, chunk_size)
+    total_chunks = len(chunks)
+    source_digest = _source_digest(text)
     _log.debug("translating %s: %d chunks, target=%s", paper_dir.name, len(chunks), lang)
 
-    translated_chunks: list[str] = []
-    failed_count = 0
-    for i, chunk in enumerate(chunks):
-        try:
-            translated = _translate_chunk(chunk, lang, config)
-            translated_chunks.append(translated)
-            _log.debug("  chunk %d/%d done (%d chars)", i + 1, len(chunks), len(translated))
-        except Exception as e:
-            _log.error("  chunk %d/%d failed: %s", i + 1, len(chunks), e)
-            translated_chunks.append(chunk)  # keep original on failure
-            failed_count += 1
+    if not force and not workdir.exists() and out_path.exists():
+        _log.debug("translation already exists: %s", out_path.name)
+        portable_path = _write_portable_translation_bundle(config, paper_dir, out_path) if portable else None
+        if portable_path is not None:
+            return TranslateResult(
+                path=out_path,
+                portable_path=portable_path,
+                completed_chunks=total_chunks,
+                total_chunks=total_chunks,
+            )
+        return TranslateResult(skip_reason=SKIP_ALREADY_EXISTS)
 
-    is_partial = failed_count > 0
-    if is_partial:
-        _log.warning(
-            "%s: %d/%d chunks failed — output is mixed-language",
-            paper_dir.name,
-            failed_count,
-            len(chunks),
+    state = _load_or_init_translation_workspace(
+        paper_dir,
+        lang=lang,
+        force=force,
+        out_path=out_path,
+        source_digest=source_digest,
+        chunk_size=chunk_size,
+        chunks=chunks,
+    )
+    translated_chunks = _load_success_prefix(workdir, state)
+    start_idx = len(translated_chunks)
+    _persist_prefix_output(out_path, translated_chunks)
+
+    if start_idx > 0 and start_idx < total_chunks:
+        report(f"继续翻译：已完成 {start_idx}/{total_chunks} 块")
+    elif start_idx == 0:
+        report(f"开始翻译，共 {total_chunks} 块")
+
+    all_success = start_idx == total_chunks and total_chunks > 0
+    if all_success:
+        _record_translation_meta(paper_dir, lang, src_lang, config, partial=False)
+        portable_path = _write_portable_translation_bundle(config, paper_dir, out_path) if portable else None
+        shutil.rmtree(workdir, ignore_errors=True)
+        report(f"翻译完成: {total_chunks}/{total_chunks} 块")
+        return TranslateResult(
+            path=out_path,
+            portable_path=portable_path,
+            completed_chunks=total_chunks,
+            total_chunks=total_chunks,
         )
 
-    result = "\n\n".join(translated_chunks)
-    out_path.write_text(result, encoding="utf-8")
-    _log.debug("translation saved: %s (%d chars)", out_path.name, len(result))
+    worker_budget = chunk_workers if chunk_workers is not None else getattr(config.translate, "concurrency", 1)
+    workers = max(1, int(worker_budget or 1))
+    pending_indices = [idx for idx, entry in enumerate(state["chunks"]) if entry.get("status") != CHUNK_STATUS_SUCCESS]
+    prev_prefix = start_idx
 
-    # Record translation metadata in meta.json
-    _record_translation_meta(paper_dir, lang, src_lang, config, partial=is_partial)
+    if pending_indices:
+        with ThreadPoolExecutor(max_workers=min(workers, len(pending_indices))) as pool:
+            in_flight = {
+                pool.submit(_translate_chunk_with_retry, chunks[idx], lang, config): idx for idx in pending_indices
+            }
+            while in_flight:
+                done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+                for fut in done:
+                    idx = in_flight.pop(fut)
+                    entry = state["chunks"][idx]
+                    try:
+                        translated, used_attempts = fut.result()
+                        _write_chunk_part(_translation_part_path(workdir, idx), translated)
+                        entry["status"] = CHUNK_STATUS_SUCCESS
+                        entry["attempts"] = int(entry.get("attempts", 0) or 0) + used_attempts
+                        entry["error"] = ""
+                        _log.debug("  chunk %d/%d done (%d chars)", idx + 1, len(chunks), len(translated))
+                    except Exception as e:
+                        entry["status"] = CHUNK_STATUS_FAILED
+                        entry["attempts"] = int(entry.get("attempts", 0) or 0) + DEFAULT_TRANSLATE_MAX_ATTEMPTS
+                        entry["error"] = str(e)
+                        _log.error("  chunk %d/%d failed after retries: %s", idx + 1, len(chunks), e)
+                    _write_translation_workspace_files(workdir, state, chunks)
 
-    return TranslateResult(path=out_path, partial=is_partial)
+                translated_chunks = _load_success_prefix(workdir, state)
+                prefix_count = len(translated_chunks)
+                if prefix_count != prev_prefix:
+                    _persist_prefix_output(out_path, translated_chunks)
+                    report(f"翻译进度: {prefix_count}/{total_chunks}")
+                    prev_prefix = prefix_count
+
+    translated_chunks = _load_success_prefix(workdir, state)
+    prefix_count = len(translated_chunks)
+    _persist_prefix_output(out_path, translated_chunks)
+
+    if prefix_count == total_chunks:
+        _record_translation_meta(paper_dir, lang, src_lang, config, partial=False)
+        portable_path = _write_portable_translation_bundle(config, paper_dir, out_path) if portable else None
+        shutil.rmtree(workdir, ignore_errors=True)
+        report(f"翻译完成: {total_chunks}/{total_chunks} 块")
+        return TranslateResult(
+            path=out_path,
+            portable_path=portable_path,
+            completed_chunks=total_chunks,
+            total_chunks=total_chunks,
+        )
+
+    if prefix_count > 0:
+        next_failed = prefix_count + 1
+        report(f"翻译在第 {next_failed}/{total_chunks} 块中断，可稍后继续续翻")
+        return TranslateResult(
+            path=out_path,
+            partial=True,
+            completed_chunks=prefix_count,
+            total_chunks=total_chunks,
+        )
+
+    _log.error("%s: all %d chunks failed; not writing output", paper_dir.name, len(chunks))
+    return TranslateResult(skip_reason=SKIP_ALL_CHUNKS_FAILED, total_chunks=total_chunks)
 
 
 def batch_translate(
@@ -444,6 +782,7 @@ def batch_translate(
     *,
     target_lang: str | None = None,
     force: bool = False,
+    portable: bool = False,
     paper_ids: set[str] | None = None,
 ) -> dict[str, int]:
     """Batch translate all papers in the library.
@@ -463,7 +802,7 @@ def batch_translate(
     from scholaraio.papers import iter_paper_dirs, read_meta
 
     lang = target_lang or config.translate.target_lang
-    workers = config.translate.concurrency
+    workers = max(1, int(getattr(config.translate, "concurrency", 1) or 1))
     stats = {"translated": 0, "skipped": 0, "failed": 0}
 
     dirs = list(iter_paper_dirs(papers_dir))
@@ -478,16 +817,30 @@ def batch_translate(
                 _log.debug("failed to read meta for %s: %s", d.name, e)
         dirs = filtered
 
+    paper_workers = min(workers, len(dirs)) if dirs else 1
+    chunk_workers = max(1, workers // paper_workers) if paper_workers else 1
+
     def _do_one(pdir: Path) -> str:
         try:
-            tr = translate_paper(pdir, config, target_lang=lang, force=force)
-            return "translated" if tr.ok else "skipped"
+            tr = translate_paper(
+                pdir,
+                config,
+                target_lang=lang,
+                force=force,
+                portable=portable,
+                chunk_workers=chunk_workers,
+            )
+            if tr.ok:
+                return "translated"
+            if tr.partial or tr.skip_reason == SKIP_ALL_CHUNKS_FAILED:
+                return "failed"
+            return "skipped"
         except Exception as e:
             _log.error("translation failed for %s: %s", pdir.name, e)
             return "failed"
 
-    if workers > 1 and len(dirs) > 1:
-        with ThreadPoolExecutor(max_workers=min(workers, len(dirs))) as pool:
+    if paper_workers > 1 and len(dirs) > 1:
+        with ThreadPoolExecutor(max_workers=paper_workers) as pool:
             futures = {pool.submit(_do_one, d): d for d in dirs}
             for fut in as_completed(futures):
                 status = fut.result()

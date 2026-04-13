@@ -5,15 +5,15 @@
     "email": "zimoliao@mail.ustc.edu.cn"
   },
   "metadata": {
-    "description": "ScholarAIO — Academic research terminal for Claude Code. Search, read, and analyze papers from your local knowledge base while coding.",
-    "version": "1.1.0"
+    "description": "ScholarAIO — A research infrastructure for AI agents. Search, read, analyze, and operationalize papers from your local knowledge base while coding.",
+    "version": "1.3.0"
   },
   "plugins": [
     {
       "name": "scholaraio",
       "source": "./",
-      "description": "Full ScholarAIO skill suite (26 skills): literature search (keyword/semantic/fusion), paper reading (L1-L4), ingestion, topic modeling, citation graphs, workspace management, BibTeX export, academic writing, and more. Requires Python 3.10+; auto-installs on first session.",
-      "version": "1.1.0",
+      "description": "Full ScholarAIO skill suite: literature search, arXiv discovery, layered reading, ingestion, topic modeling, citation graphs, insights analytics, scientific tool docs, Office document inspection, workspace management, academic writing, and more. Requires Python 3.10+; auto-installs on first session.",
+      "version": "1.3.0",
       "author": {
         "name": "ZimoLiao",
         "email": "zimoliao@mail.ustc.edu.cn"
@@ -29,6 +29,10 @@
         "citation",
         "citations",
         "papers",
+        "arxiv",
+        "toolref",
+        "insights",
+        "office-documents",
         "scholarly-writing",
         "knowledge-base",
         "semantic-search",

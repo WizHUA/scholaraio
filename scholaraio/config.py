@@ -24,11 +24,25 @@ LLM API key 查找顺序：
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+_log = logging.getLogger(__name__)
+
+VALID_LOCAL_MINERU_BACKENDS = {
+    "pipeline",
+    "vlm-auto-engine",
+    "vlm-http-client",
+    "hybrid-auto-engine",
+    "hybrid-http-client",
+}
+VALID_PDF_CLOUD_MODEL_VERSIONS = {"pipeline", "vlm"}
+VALID_MINERU_PARSE_METHODS = {"auto", "txt", "ocr"}
+VALID_PDF_PREFERRED_PARSERS = {"mineru", "docling", "pymupdf"}
 
 # ============================================================================
 #  Config dataclasses
@@ -97,6 +111,7 @@ class EmbedConfig:
         device: 推理设备，``"auto"`` | ``"cpu"`` | ``"cuda"``。
         top_k: ``scholaraio vsearch`` 默认返回条数。
         source: 模型下载源，``"modelscope"`` | ``"huggingface"``。
+        hf_endpoint: HuggingFace 镜像地址（可选），用于无代理或私有镜像。
     """
 
     model: str = "Qwen/Qwen3-Embedding-0.6B"
@@ -104,6 +119,7 @@ class EmbedConfig:
     device: str = "auto"
     top_k: int = 10
     source: str = "modelscope"
+    hf_endpoint: str = ""
 
 
 @dataclass
@@ -147,8 +163,18 @@ class IngestConfig:
     Attributes:
         extractor: 元数据提取模式，``"regex"`` | ``"auto"`` | ``"llm"`` | ``"robust"``。
         mineru_endpoint: MinerU 本地 API 地址。
-        mineru_cloud_url: MinerU 云 API 基础 URL。
-        mineru_api_key: MinerU 云 API 密钥，建议放 config.local.yaml 或环境变量。
+        mineru_cloud_url: `mineru-open-api` 的 ``--base-url`` 覆盖值。
+            默认值保留官方公网地址，私有部署时可改成自建服务。
+        mineru_api_key: MinerU token，建议放 config.local.yaml 或环境变量。
+            兼容旧字段名；运行时会映射给 ``mineru-open-api`` 的 ``MINERU_TOKEN``。
+        mineru_backend_local: 本地 MinerU backend（``pipeline`` | ``vlm-auto-engine`` |
+            ``vlm-http-client`` | ``hybrid-auto-engine`` | ``hybrid-http-client``）。
+        mineru_model_version_cloud: 云端 PDF 解析 model_version（``pipeline`` | ``vlm``）。
+        mineru_lang: MinerU OCR 语言（``ch`` | ``en`` | ``latin`` 等）。
+        mineru_parse_method: 解析方式（``auto`` | ``txt`` | ``ocr``）。对云端精确解析 API，
+            仅 ``ocr`` 会映射为 ``file.is_ocr=true``。
+        mineru_enable_formula: 是否启用公式解析。仅对云端 ``pipeline``/``vlm`` 生效。
+        mineru_enable_table: 是否启用表格解析。仅对云端 ``pipeline``/``vlm`` 生效。
         abstract_llm_mode: abstract 提取时的 LLM 介入模式：
 
             - ``"off"``：纯正则，不使用 LLM。
@@ -158,20 +184,45 @@ class IngestConfig:
         contact_email: Crossref polite pool 联系邮箱（User-Agent），建议放 config.local.yaml。
         s2_api_key: Semantic Scholar API 密钥，有 key 可大幅提升限速（1 req/s vs 100 req/5min）。
             建议放 config.local.yaml 或环境变量 ``S2_API_KEY``。
-        chunk_page_limit: 超长 PDF 自动切分的页数阈值。超过此值的 PDF 在 MinerU
-            转换前自动拆分为多个短 PDF，转换后合并为单个 Markdown。
-        mineru_batch_size: MinerU 云 API 每批提交文件数上限，默认 20。
+        chunk_page_limit: 本地 MinerU 对超长 PDF 的自动切分页数阈值。超过此值
+            的 PDF 在转换前自动拆分为多个短 PDF，转换后合并为单个 Markdown。
+            云端 MinerU 另外还会遵循 600 页 / 200MB 的官方单文件限制。
+        mineru_batch_size: `mineru-open-api` 兼容层的分块大小，默认 20。
+        mineru_upload_workers: 云端 CLI / `mineru-open-api` 兼容层的并发配置。
+            对分块后的云端转换仍生效，用于限制同时进行的转换任务数。
+        mineru_upload_retries: 云端 `mineru-open-api` 单文件重试次数（含首轮），
+            默认 3。当前用于 MinerU cloud CLI 的指数退避重试。
+        mineru_download_retries: 旧云 API 下载重试配置；为兼容保留。
+        mineru_poll_timeout: `mineru-open-api` 单次转换超时（秒），默认 900。
+        pdf_preferred_parser: 首选 PDF 解析器。默认优先 ``mineru``，也可显式设为
+            ``docling`` 或 ``pymupdf`` 跳过 MinerU。
+        pdf_fallback_order: MinerU 不可用或解析失败时的替代解析器顺序。
+            支持 ``docling`` / ``pymupdf`` / ``auto``。
+        pdf_fallback_auto_detect: 是否启用自动检测本机已安装的 fallback 解析器。
     """
 
     extractor: str = "robust"  # regex | auto | llm | robust
     mineru_endpoint: str = "http://localhost:8000"
     mineru_cloud_url: str = "https://mineru.net/api/v4"
     mineru_api_key: str = ""
+    mineru_backend_local: str = "pipeline"
+    mineru_model_version_cloud: str = "pipeline"
+    mineru_lang: str = "ch"
+    mineru_parse_method: str = "auto"
+    mineru_enable_formula: bool = True
+    mineru_enable_table: bool = True
     abstract_llm_mode: str = "verify"  # off | fallback | verify
     contact_email: str = ""
     s2_api_key: str = ""  # Semantic Scholar API key for higher rate limits
-    chunk_page_limit: int = 100  # auto-split PDFs exceeding this page count
+    chunk_page_limit: int = 100  # local MinerU auto-split threshold in pages
     mineru_batch_size: int = 20  # cloud batch size per request
+    mineru_upload_workers: int = 4
+    mineru_upload_retries: int = 3
+    mineru_download_retries: int = 3
+    mineru_poll_timeout: int = 900
+    pdf_preferred_parser: str = "mineru"
+    pdf_fallback_order: list[str] = field(default_factory=lambda: ["auto"])
+    pdf_fallback_auto_detect: bool = True
 
 
 @dataclass
@@ -182,13 +233,13 @@ class TranslateConfig:
         auto_translate: 入库时是否自动翻译非目标语言的论文。
         target_lang: 翻译目标语言代码（``"zh"`` | ``"en"`` 等）。
         chunk_size: 分块翻译时每块最大字符数（避免超 LLM token 限制）。
-        concurrency: 并发翻译数。
+        concurrency: 总翻译并发预算（单篇时用于 chunk 并发，批量时会在论文间分摊）。
     """
 
     auto_translate: bool = False
     target_lang: str = "zh"
     chunk_size: int = 4000
-    concurrency: int = 5
+    concurrency: int = 20
 
 
 @dataclass
@@ -218,6 +269,7 @@ class Config:
         search: 全文检索配置。
         topics: BERTopic 主题建模配置。
         log: 日志与指标配置。
+        translate: 自动翻译配置。
         zotero: Zotero 集成配置。
     """
 
@@ -259,16 +311,23 @@ class Config:
         """BERTopic 模型保存目录的绝对路径。"""
         return (self._root / self.topics.model_dir).resolve()
 
+    @property
+    def workspace_dir(self) -> Path:
+        """工作区根目录的绝对路径。"""
+        return (self._root / "workspace").resolve()
+
     def ensure_dirs(self) -> None:
         """创建运行所需的目录（data/papers, data/inbox, data/pending, workspace 等）。"""
         for d in (
             self.papers_dir,
             self._root / "data" / "inbox",
+            self._root / "data" / "inbox-proceedings",
             self._root / "data" / "inbox-thesis",
             self._root / "data" / "inbox-patent",
             self._root / "data" / "inbox-doc",
             self._root / "data" / "pending",
-            self._root / "workspace",
+            self._root / "data" / "proceedings",
+            self.workspace_dir,
             self.log_file.parent,
             self.metrics_db_path.parent,
         ):
@@ -329,16 +388,18 @@ class Config:
         return os.environ.get("ZOTERO_LIBRARY_ID", "")
 
     def resolved_mineru_api_key(self) -> str:
-        """按优先级查找 MinerU 云 API key。
+        """按优先级查找 MinerU token。
 
-        查找顺序: config ``ingest.mineru_api_key`` → 环境变量 ``MINERU_API_KEY``。
+        查找顺序:
+        config ``ingest.mineru_api_key`` → 环境变量 ``MINERU_TOKEN`` →
+        环境变量 ``MINERU_API_KEY``（旧兼容名）。
 
         Returns:
-            API key 字符串，未找到则返回空字符串。
+            token 字符串，未找到则返回空字符串。
         """
         if self.ingest.mineru_api_key:
             return self.ingest.mineru_api_key
-        return os.environ.get("MINERU_API_KEY", "")
+        return os.environ.get("MINERU_TOKEN", "") or os.environ.get("MINERU_API_KEY", "")
 
     def resolved_s2_api_key(self) -> str:
         """按优先级查找 Semantic Scholar API key。
@@ -428,6 +489,81 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def _bool_or_default(value: object, default: bool) -> bool:
+    """Return ``default`` for ``None``; otherwise coerce common bool-like values."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"true", "1", "yes", "on"}:
+            return True
+        if text in {"false", "0", "no", "off"}:
+            return False
+    return bool(value)
+
+
+def _normalize_choice(value: object, *, default: str, valid: set[str], field_name: str) -> str:
+    """Normalize a string choice with safe fallback."""
+    text = str(value or "").strip().lower()
+    if not text:
+        return default
+    if text in valid:
+        return text
+    _log.warning("invalid %s=%r, fallback to %s", field_name, value, default)
+    return default
+
+
+def _normalize_mineru_pdf_cloud_model_version(value: object) -> str:
+    """Normalize MinerU cloud model_version for ScholarAIO's PDF-only ingest flow."""
+    raw_text = str(value or "").strip()
+    if not raw_text:
+        return "pipeline"
+    text = raw_text.lower()
+    if text == "mineru-html":
+        _log.warning("MinerU-HTML is for HTML parsing, not PDF ingest; fallback to pipeline")
+        return "pipeline"
+    valid_versions = {version.lower() for version in VALID_PDF_CLOUD_MODEL_VERSIONS}
+    if text in valid_versions:
+        return text
+    _log.warning("invalid ingest.mineru_model_version_cloud=%r, fallback to pipeline", value)
+    return "pipeline"
+
+
+def _normalize_mineru_lang(value: object) -> str:
+    """Normalize MinerU language with a safe default."""
+    text = str(value or "").strip().lower()
+    return text or "ch"
+
+
+def _normalize_mineru_batch_size(value: object) -> int:
+    """Normalize MinerU cloud batch size to the official 1-200 range."""
+    try:
+        size = int(str(value or 20).strip())
+    except (TypeError, ValueError):
+        _log.warning("invalid ingest.mineru_batch_size=%r, fallback to 20", value)
+        return 20
+    if size <= 0:
+        return 20
+    if size > 200:
+        _log.warning("ingest.mineru_batch_size=%s exceeds MinerU limit 200, clamp to 200", size)
+        return 200
+    return size
+
+
+def _normalize_positive_int(value: object, *, default: int, field_name: str, minimum: int = 1) -> int:
+    """Normalize a positive integer config field."""
+    try:
+        parsed = int(str(value if value is not None else default).strip())
+    except (TypeError, ValueError):
+        _log.warning("invalid %s=%r, fallback to %s", field_name, value, default)
+        return default
+    if parsed < minimum:
+        return default
+    return parsed
+
+
 def _build_config(data: dict, root: Path) -> Config:
     """Build Config dataclass from raw dict."""
     paths_data = data.get("paths", {}) or {}
@@ -455,20 +591,76 @@ def _build_config(data: dict, root: Path) -> Config:
         mineru_endpoint=ingest_data.get("mineru_endpoint", "http://localhost:8000"),
         mineru_cloud_url=ingest_data.get("mineru_cloud_url", "https://mineru.net/api/v4"),
         mineru_api_key=ingest_data.get("mineru_api_key") or "",
+        mineru_backend_local=_normalize_choice(
+            ingest_data.get("mineru_backend_local", "pipeline"),
+            default="pipeline",
+            valid=VALID_LOCAL_MINERU_BACKENDS,
+            field_name="ingest.mineru_backend_local",
+        ),
+        mineru_model_version_cloud=_normalize_mineru_pdf_cloud_model_version(
+            ingest_data.get("mineru_model_version_cloud", "pipeline")
+        ),
+        mineru_lang=_normalize_mineru_lang(ingest_data.get("mineru_lang", "ch")),
+        mineru_parse_method=_normalize_choice(
+            ingest_data.get("mineru_parse_method", "auto"),
+            default="auto",
+            valid=VALID_MINERU_PARSE_METHODS,
+            field_name="ingest.mineru_parse_method",
+        ),
+        mineru_enable_formula=_bool_or_default(ingest_data.get("mineru_enable_formula"), True),
+        mineru_enable_table=_bool_or_default(ingest_data.get("mineru_enable_table"), True),
         abstract_llm_mode=ingest_data.get("abstract_llm_mode", "verify"),
         contact_email=ingest_data.get("contact_email") or "",
         s2_api_key=ingest_data.get("s2_api_key") or "",
-        mineru_batch_size=int(ingest_data.get("mineru_batch_size") or 20),
+        mineru_batch_size=_normalize_mineru_batch_size(ingest_data.get("mineru_batch_size")),
+        mineru_upload_workers=_normalize_positive_int(
+            ingest_data.get("mineru_upload_workers"),
+            default=4,
+            field_name="ingest.mineru_upload_workers",
+        ),
+        mineru_upload_retries=_normalize_positive_int(
+            ingest_data.get("mineru_upload_retries"),
+            default=3,
+            field_name="ingest.mineru_upload_retries",
+        ),
+        mineru_download_retries=_normalize_positive_int(
+            ingest_data.get("mineru_download_retries"),
+            default=3,
+            field_name="ingest.mineru_download_retries",
+        ),
+        mineru_poll_timeout=_normalize_positive_int(
+            ingest_data.get("mineru_poll_timeout"),
+            default=900,
+            field_name="ingest.mineru_poll_timeout",
+            minimum=60,
+        ),
         chunk_page_limit=int(ingest_data.get("chunk_page_limit") or 100),
+        pdf_preferred_parser=_normalize_choice(
+            ingest_data.get("pdf_preferred_parser", "mineru"),
+            default="mineru",
+            valid=VALID_PDF_PREFERRED_PARSERS,
+            field_name="ingest.pdf_preferred_parser",
+        ),
+        pdf_fallback_order=_coerce_str_list(ingest_data.get("pdf_fallback_order"), default=["auto"]),
+        pdf_fallback_auto_detect=_bool_or_default(ingest_data.get("pdf_fallback_auto_detect"), True),
     )
 
     embed_data = data.get("embed", {}) or {}
+    embed_source = os.environ.get("SCHOLARAIO_EMBED_SOURCE") or embed_data.get("source") or "modelscope"
+    embed_cache_dir = (
+        os.environ.get("SCHOLARAIO_EMBED_CACHE_DIR") or embed_data.get("cache_dir") or "~/.cache/modelscope/hub/models"
+    )
+    embed_model = os.environ.get("SCHOLARAIO_EMBED_MODEL") or embed_data.get("model") or "Qwen/Qwen3-Embedding-0.6B"
+    hf_endpoint = (
+        os.environ.get("SCHOLARAIO_HF_ENDPOINT") or embed_data.get("hf_endpoint") or os.environ.get("HF_ENDPOINT") or ""
+    )
     embed = EmbedConfig(
-        model=embed_data.get("model", "Qwen/Qwen3-Embedding-0.6B"),
-        cache_dir=embed_data.get("cache_dir", "~/.cache/modelscope/hub/models"),
+        model=embed_model,
+        cache_dir=embed_cache_dir,
         device=embed_data.get("device", "auto"),
         top_k=int(embed_data.get("top_k", 10)),
-        source=embed_data.get("source", "modelscope"),
+        source=embed_source,
+        hf_endpoint=hf_endpoint,
     )
 
     search_data = data.get("search", {}) or {}
@@ -497,7 +689,7 @@ def _build_config(data: dict, root: Path) -> Config:
         auto_translate=bool(translate_data.get("auto_translate", False)),
         target_lang=translate_data.get("target_lang", "zh"),
         chunk_size=int(translate_data.get("chunk_size", 4000)),
-        concurrency=max(1, int(translate_data.get("concurrency", 5))),
+        concurrency=max(1, int(translate_data.get("concurrency", 20))),
     )
 
     zotero_data = data.get("zotero", {}) or {}
@@ -519,3 +711,28 @@ def _build_config(data: dict, root: Path) -> Config:
         zotero=zotero,
         _root=root,
     )
+
+
+def _coerce_str_list(value, *, default: list[str]) -> list[str]:
+    """Normalize config values that accept either a string or a list of strings."""
+    if value is None:
+        return list(default)
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else list(default)
+    if isinstance(value, (list, tuple)):
+        result = []
+        for item in value:
+            if item is None or not isinstance(item, str):
+                continue
+            text = item.strip()
+            if text:
+                result.append(text)
+        return result or list(default)
+    _log.warning(
+        "invalid string-list config value %r (type=%s), fallback to default %r",
+        value,
+        type(value).__name__,
+        default,
+    )
+    return list(default)

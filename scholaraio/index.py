@@ -43,6 +43,27 @@ CREATE VIRTUAL TABLE IF NOT EXISTS papers USING fts5(
 );
 """
 
+_PROCEEDINGS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS proceedings_fts USING fts5(
+    paper_id          UNINDEXED,
+    title,
+    authors,
+    year,
+    journal,
+    abstract,
+    conclusion,
+    doi               UNINDEXED,
+    paper_type        UNINDEXED,
+    citation_count    UNINDEXED,
+    md_path           UNINDEXED,
+    dir_name          UNINDEXED,
+    proceeding_id     UNINDEXED,
+    proceeding_dir    UNINDEXED,
+    proceeding_title  UNINDEXED,
+    tokenize          = 'unicode61'
+);
+"""
+
 
 _HASH_SCHEMA = """
 CREATE TABLE IF NOT EXISTS papers_hash (
@@ -326,6 +347,10 @@ def build_index(papers_dir: Path, db_path: Path, rebuild: bool = False) -> int:
 
 
 _SEARCH_COLS = "paper_id, title, authors, year, journal, doi, paper_type, citation_count"
+_PROCEEDINGS_SEARCH_COLS = (
+    "paper_id, title, authors, year, journal, doi, paper_type, citation_count, "
+    "dir_name, proceeding_id, proceeding_dir, proceeding_title"
+)
 
 
 def _reference_dois(refs: list) -> list[str]:
@@ -363,6 +388,118 @@ def _ensure_fts_table(conn: sqlite3.Connection) -> None:
     has_table = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='papers'").fetchone()
     if not has_table:
         raise FileNotFoundError("FTS5 索引表不存在，请先运行 `scholaraio index`")
+
+
+def _ensure_proceedings_fts_table(conn: sqlite3.Connection) -> None:
+    has_table = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='proceedings_fts'").fetchone()
+    if not has_table:
+        raise FileNotFoundError("论文集 FTS5 索引表不存在，请先构建论文集索引")
+
+
+def build_proceedings_index(proceedings_root: Path, db_path: Path, rebuild: bool = False) -> int:
+    """Build a keyword index for proceedings child papers."""
+    from scholaraio.proceedings import iter_proceedings_papers
+
+    rows = list(iter_proceedings_papers(proceedings_root))
+    current_proceeding_ids = {str(row["proceeding_id"]) for row in rows}
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(_PROCEEDINGS_SCHEMA)
+        if rebuild:
+            conn.execute("DELETE FROM proceedings_fts")
+        else:
+            existing_proceeding_ids = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT proceeding_id FROM proceedings_fts WHERE proceeding_id IS NOT NULL AND proceeding_id != ''"
+                )
+            }
+            stale_proceeding_ids = existing_proceeding_ids - current_proceeding_ids
+            if stale_proceeding_ids:
+                conn.executemany(
+                    "DELETE FROM proceedings_fts WHERE proceeding_id = ?",
+                    [(proceeding_id,) for proceeding_id in stale_proceeding_ids],
+                )
+
+        count = 0
+        cleared_proceedings: set[str] = set()
+        for row in rows:
+            if not rebuild:
+                proceeding_id = row["proceeding_id"]
+                if proceeding_id not in cleared_proceedings:
+                    conn.execute(
+                        """
+                        DELETE FROM proceedings_fts
+                        WHERE proceeding_id = ?
+                        """,
+                        (proceeding_id,),
+                    )
+                    cleared_proceedings.add(proceeding_id)
+            conn.execute(
+                """
+                INSERT INTO proceedings_fts
+                    (paper_id, title, authors, year, journal, abstract, conclusion,
+                     doi, paper_type, citation_count, md_path, dir_name,
+                     proceeding_id, proceeding_dir, proceeding_title)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["paper_id"],
+                    row["title"],
+                    row["authors"],
+                    row["year"],
+                    row["journal"],
+                    row["abstract"],
+                    row["conclusion"],
+                    row["doi"],
+                    row["paper_type"],
+                    row["citation_count"],
+                    row["md_path"],
+                    row["dir_name"],
+                    row["proceeding_id"],
+                    row["proceeding_dir"],
+                    row["proceeding_title"],
+                ),
+            )
+            count += 1
+        conn.commit()
+        return count
+    finally:
+        conn.close()
+
+
+def search_proceedings(
+    query: str,
+    db_path: Path,
+    top_k: int = 20,
+    *,
+    year: str | None = None,
+    journal: str | None = None,
+    paper_type: str | None = None,
+) -> list[dict]:
+    """Keyword search over proceedings child papers."""
+    if not db_path.exists():
+        raise FileNotFoundError(f"索引文件不存在：{db_path}")
+
+    conn = sqlite3.connect(db_path)
+    try:
+        _ensure_proceedings_fts_table(conn)
+        conn.row_factory = sqlite3.Row
+        filter_sql, filter_params = _build_filter_clause(year=year, journal=journal, paper_type=paper_type)
+        rows = conn.execute(
+            f"""
+            SELECT {_PROCEEDINGS_SEARCH_COLS}
+            FROM proceedings_fts
+            WHERE proceedings_fts MATCH ?{filter_sql}
+            ORDER BY rank
+            LIMIT ?
+            """,
+            [_safe_query(query), *filter_params, top_k],
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def search(
@@ -755,6 +892,10 @@ def unified_search(
             paper_ids=paper_ids,
         )
     except (FileNotFoundError, ImportError):
+        pass
+    except Exception:
+        # Runtime vector initialization can fail in restricted/offline
+        # environments; unified search must still return FTS results.
         pass
 
     # -- Merge via Reciprocal Rank Fusion (RRF) --

@@ -36,7 +36,8 @@ class PaperMetadata:
         api_sources: 成功返回数据的 API 列表。
         references: 参考文献 DOI 列表（从 Semantic Scholar 获取）。
         source_file: 原始文件名。
-        extraction_method: 提取方式（``doi_lookup`` | ``title_search`` |
+        arxiv_id: arXiv 标识符（如 ``2401.12345`` 或 ``hep-th/9901001``，不含版本后缀）。
+        extraction_method: 提取方式（``doi_lookup`` | ``arxiv_lookup`` | ``title_search`` |
             ``title_search_relaxed`` | ``title_search_s2`` | ``local_only``）。
     """
 
@@ -47,6 +48,7 @@ class PaperMetadata:
     first_author_lastname: str = ""
     year: int | None = None
     doi: str = ""
+    arxiv_id: str = ""  # arXiv identifier (e.g. 2401.12345, hep-th/9901001)
     publication_number: str = ""  # patent publication number (e.g. CN123456789A, US10123456B2)
     journal: str = ""
     abstract: str = ""

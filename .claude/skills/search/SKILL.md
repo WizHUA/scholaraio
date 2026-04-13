@@ -18,7 +18,7 @@ tags: ["academic", "search", "papers", "semantic", "fts5"]
    - 如果用户明确按作者搜索（如"找某某的论文"、"某某发表的"），使用 `search-author`
    - 如果用户要求按引用量排序（如"引用最高的"、"最经典的"、"top cited"），转交 `/citations` skill
    - **默认使用 `usearch`（融合检索）**——同时执行 FTS5 关键词搜索和 FAISS 语义搜索，合并去重排序。两路都命中的论文排名靠前。向量索引不可用时自动降级为纯关键词。
-   - 如果用户要求跨库搜索（如"也搜一下 arXiv"、"在 explore 库里也找找"、"全部来源"、"联邦搜索"），使用 `fsearch`
+   - 如果用户要求跨库搜索（如"也搜一下 arXiv"、"在 explore 库里也找找"、"也搜 proceedings"、"全部来源"、"联邦搜索"），使用 `fsearch`
 
 2. 从用户输入中提取：
    - **查询词**：用户想搜索的内容
@@ -56,6 +56,9 @@ scholaraio search-author "<作者名>" --top <N> [--year <Y>] [--journal <J>] [-
 # 同时搜主库和 arXiv
 scholaraio fsearch "<查询词>" --scope main,arxiv --top <N>
 
+# 同时搜主库和 proceedings
+scholaraio fsearch "<查询词>" --scope main,proceedings
+
 # 同时搜主库和所有 explore 库
 scholaraio fsearch "<查询词>" --scope main,explore:*
 
@@ -66,10 +69,10 @@ scholaraio fsearch "<查询词>" --scope explore:my-survey
 scholaraio fsearch "<查询词>" --scope arxiv
 
 # 全部来源
-scholaraio fsearch "<查询词>" --scope main,explore:*,arxiv
+scholaraio fsearch "<查询词>" --scope main,proceedings,explore:*,arxiv
 ```
 
-`--scope` 支持逗号分隔组合：`main`（主库融合搜索）、`explore:<名称>` 或 `explore:*`（explore 库）、`arxiv`（在线 arXiv API）。默认 scope 为 `main`。arXiv 结果会标注 `[已入库]` 表示该论文已在本地库中。
+`--scope` 支持逗号分隔组合：`main`（主库融合搜索）、`proceedings`（论文集子论文）、`explore:<名称>` 或 `explore:*`（explore 库）、`arxiv`（在线 arXiv API）。默认 scope 为 `main`。arXiv 结果会标注 `[已入库]` 表示该论文已在本地库中。
 
 4. 将搜索结果整理后呈现给用户。融合检索结果中每项标注了匹配来源：
    - `both`：关键词和语义都命中（最相关）
@@ -111,7 +114,10 @@ ids, toc, l3_conclusion
 → 执行 `fsearch "physics-informed neural network" --scope main,arxiv`
 
 用户说："所有来源都搜一下 drag reduction，包括 explore 库"
-→ 执行 `fsearch "drag reduction" --scope main,explore:*,arxiv`
+→ 执行 `fsearch "drag reduction" --scope main,proceedings,explore:*,arxiv`
 
 用户说："在我之前建的 wall-bounded-turbulence explore 库里搜 channel flow"
 → 执行 `fsearch "channel flow" --scope explore:wall-bounded-turbulence`
+
+用户说："连 proceedings 一起搜 granular damping"
+→ 执行 `fsearch "granular damping" --scope main,proceedings`

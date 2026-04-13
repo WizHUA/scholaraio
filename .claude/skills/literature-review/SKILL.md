@@ -100,6 +100,7 @@ scholaraio citing "<id>"                      # 被引论文
 ```bash
 scholaraio ws export <name> -o workspace/<name>/references.bib
 ```
+- 定稿前用 `/citation-check` 检查正文中的 author-year 引用，避免幻觉引用和年份/作者错配
 - 将综述正文保存到 `workspace/<name>/literature-review.md`（或用户指定的文件名）
 
 ## 学术态度

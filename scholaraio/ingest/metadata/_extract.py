@@ -45,6 +45,9 @@ def extract_metadata_from_markdown(filepath: Path, *, text: str | None = None) -
     # DOI (search wider area)
     meta.doi = _extract_doi("\n".join(lines[:80]))
 
+    # arXiv ID (from text and filename)
+    meta.arxiv_id = _extract_arxiv_id("\n".join(lines[:80]), filepath)
+
     # Authors: try after title first, then check H1 lines before title
     if title_idx >= 0:
         meta.authors = _extract_authors(header_lines, title_idx + 1)
@@ -314,6 +317,57 @@ def _extract_doi(text: str) -> str:
             if any(doi.startswith(prefix) for prefix in REJECT_DOI_PREFIXES):
                 continue  # skip data repository DOIs
             return doi
+    return ""
+
+
+# arXiv archive prefixes (old format, pre-April 2007)
+_ARXIV_OLD_ARCHIVES = (
+    "astro-ph|cond-mat|gr-qc|hep-ex|hep-lat|hep-ph|hep-th|math-ph|"
+    "nlin|nucl-ex|nucl-th|physics|quant-ph|math|cs|q-bio|q-fin|stat"
+)
+
+# New format: YYMM.NNNN or YYMM.NNNNN (4 or 5 digits, Apr 2007+)
+# Old format: archive/YYMMNNN (pre-Apr 2007)
+_ARXIV_NEW_RE = re.compile(r"\d{4}\.\d{4,5}")
+_ARXIV_OLD_RE = re.compile(rf"(?:{_ARXIV_OLD_ARCHIVES})(?:\.[A-Za-z-]+)?/\d{{7}}")
+
+
+def _extract_arxiv_id(text: str, filepath: Path | None = None) -> str:
+    """Extract arXiv ID from text content and/or filename.
+
+    Searches for patterns like ``arXiv:2401.12345``, ``arxiv.org/abs/2401.12345``,
+    or bare IDs in the header. Also checks the filename for arXiv ID patterns.
+    Returns the ID without version suffix (e.g. ``2401.12345``, not ``2401.12345v2``).
+    """
+    # 1. Explicit arXiv references in text (highest confidence)
+    patterns = [
+        # arXiv:YYMM.NNNNN or arXiv:YYMM.NNNNNvN
+        rf"arXiv\s*[:]\s*({_ARXIV_NEW_RE.pattern}|{_ARXIV_OLD_RE.pattern})(?:v\d+)?",
+        # arxiv.org/abs/YYMM.NNNNN
+        rf"arxiv\.org/abs/({_ARXIV_NEW_RE.pattern}|{_ARXIV_OLD_RE.pattern})(?:v\d+)?",
+        # arxiv.org/pdf/YYMM.NNNNN
+        rf"arxiv\.org/pdf/({_ARXIV_NEW_RE.pattern}|{_ARXIV_OLD_RE.pattern})(?:v\d+)?",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            return m.group(1)
+
+    # 2. Check filename (e.g. 0906.2569v2.pdf → 0906.2569)
+    if filepath:
+        stem = filepath.stem
+        # New format in filename
+        m = re.fullmatch(rf"({_ARXIV_NEW_RE.pattern})(?:v\d+)?", stem)
+        if m:
+            return m.group(1)
+        # Old format in filename (e.g. hep-th_9901001.pdf — underscore variant)
+        m = re.fullmatch(
+            rf"({_ARXIV_OLD_RE.pattern.replace('/', '/')})(?:v\d+)?",
+            stem.replace("_", "/"),
+        )
+        if m:
+            return m.group(1)
+
     return ""
 
 

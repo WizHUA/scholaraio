@@ -28,6 +28,14 @@ scholaraio usearch "Reynolds stress modeling"
 
 Combines keyword and semantic results using Reciprocal Rank Fusion (RRF).
 
+### Federated Search
+
+```bash
+scholaraio fsearch "wall turbulence" --scope main,proceedings,explore:*,arxiv
+```
+
+Searches across the main library, proceedings, one or more `explore` silos, and arXiv in one command.
+
 ### Author Search
 
 ```bash
@@ -58,3 +66,21 @@ scholaraio search "turbulence" --year 2020-2024 --journal "JFM" --type review
 ```bash
 scholaraio top-cited --top 20 --year 2020-
 ```
+
+## arXiv Search and Fetch
+
+```bash
+scholaraio arxiv search "compliant wall turbulence" --category physics.flu-dyn
+scholaraio arxiv fetch 2604.00484 --ingest
+```
+
+Use `arxiv search` to discover preprints and `arxiv fetch` to download a PDF or send it directly into the ingest pipeline.
+
+## Scientific Tool Documentation
+
+```bash
+scholaraio toolref search openfoam "y plus"
+scholaraio toolref show qe pw conv_thr
+```
+
+Use `toolref` when you need authoritative parameter or command documentation for supported scientific tools.

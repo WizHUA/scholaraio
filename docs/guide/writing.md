@@ -1,6 +1,6 @@
 # Academic Writing
 
-ScholarAIO includes several agent skills to assist with academic writing. These work best through Claude Code's natural language interface.
+ScholarAIO includes several agent skills to assist with academic writing. These work best through an agent host that can load ScholarAIO skills; the examples below use Claude Code-style slash-skill names.
 
 ## Available Writing Skills
 
@@ -31,5 +31,5 @@ Verifies citations in AI-generated or human-written text against the knowledge b
 ## Workflow
 
 1. Create a workspace: use `/workspace` to organize relevant papers
-2. Use writing skills via Claude Code: `/<skill-name>`
+2. Use the writing skill from your agent host, for example in Claude Code: `/<skill-name>`
 3. Output files are saved in `workspace/<name>/`

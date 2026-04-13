@@ -31,6 +31,9 @@ config.local.yaml
 # Developer docs (not published)
 docs-dev/
 docs/issues.md
+docs/internal/
+docs/superpowers/
+site/
 
 # Local agent worktrees
 .claude/worktrees/
@@ -40,3 +43,5 @@ docs/issues.md
 
 # Local symlink entry
 /skills
+
+*.codex

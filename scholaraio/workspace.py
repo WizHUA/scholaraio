@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -157,17 +158,28 @@ def remove(ws_dir: Path, paper_refs: list[str], db_path: Path) -> list[dict]:
 
     entries = _read(ws_dir)
     remove_ids: set[str] = set()
+    remove_dir_names: set[str] = set()
+    entry_ids = {e["id"] for e in entries}
+    entry_dir_names = {e.get("dir_name") for e in entries}
     for ref in paper_refs:
-        record = lookup_paper(db_path, ref)
+        try:
+            record = lookup_paper(db_path, ref)
+        except sqlite3.Error as exc:
+            _log.warning("lookup_paper 失败，回退到工作区可见标识: %s", exc)
+            record = None
         if record:
             remove_ids.add(record["id"])
         else:
-            # Try direct UUID match
-            remove_ids.add(ref)
+            # Fall back to exact workspace-visible identifiers when the index is stale
+            # or unavailable, so users can still remove items they see in `ws show`.
+            if ref in entry_ids:
+                remove_ids.add(ref)
+            elif ref in entry_dir_names:
+                remove_dir_names.add(ref)
 
-    removed = [e for e in entries if e["id"] in remove_ids]
+    removed = [e for e in entries if e["id"] in remove_ids or e.get("dir_name") in remove_dir_names]
     if removed:
-        entries = [e for e in entries if e["id"] not in remove_ids]
+        entries = [e for e in entries if e["id"] not in remove_ids and e.get("dir_name") not in remove_dir_names]
         _write(ws_dir, entries)
     return removed
 

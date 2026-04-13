@@ -366,7 +366,7 @@ def export_docx(
         from docx import Document
         from docx.shared import Pt
     except ImportError:
-        raise ImportError("python-docx 未安装，请运行: pip install python-docx")
+        raise ImportError("python-docx 未安装，请运行: pip install scholaraio[office]")
 
     doc = Document()
 
@@ -389,7 +389,7 @@ def _md_to_docx(doc, content: str) -> None:
     try:
         from docx.shared import Pt
     except ImportError:
-        raise ImportError("python-docx 未安装，请运行: pip install python-docx")
+        raise ImportError("python-docx 未安装，请运行: pip install scholaraio[office]")
 
     lines = content.splitlines()
     i = 0

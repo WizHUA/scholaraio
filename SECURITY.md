@@ -30,4 +30,4 @@ ScholarAIO handles:
 
 - Keep `config.local.yaml` out of version control (already in `.gitignore`)
 - Use environment variables for API keys in CI/CD environments
-- Review PDF sources before ingestion — MinerU processes PDFs locally or via cloud API
+- Review PDF sources before ingestion — MinerU processes PDFs locally or via `mineru-open-api` cloud requests

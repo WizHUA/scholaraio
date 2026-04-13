@@ -21,6 +21,7 @@ import os
 import sqlite3
 import struct
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -67,7 +68,6 @@ _model_cache: dict = {}  # key: (model_path, device) → SentenceTransformer
 def _load_model(cfg: Config | None = None):
     """Load SentenceTransformer, using module-level cache to avoid reloading."""
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-    SentenceTransformer = importlib.import_module("sentence_transformers").SentenceTransformer
 
     # Resolve config
     if cfg is not None:
@@ -75,11 +75,20 @@ def _load_model(cfg: Config | None = None):
         cache_dir = os.path.expanduser(cfg.embed.cache_dir)
         device_cfg = cfg.embed.device
         source = cfg.embed.source
+        hf_endpoint = cfg.embed.hf_endpoint
     else:
         model_name = "Qwen/Qwen3-Embedding-0.6B"
         cache_dir = os.path.expanduser("~/.cache/modelscope/hub/models")
         device_cfg = "auto"
         source = "modelscope"
+        hf_endpoint = os.environ.get("SCHOLARAIO_HF_ENDPOINT") or os.environ.get("HF_ENDPOINT") or ""
+
+    if source == "modelscope":
+        os.environ["MODELSCOPE_CACHE"] = cache_dir
+    if hf_endpoint:
+        os.environ["HF_ENDPOINT"] = hf_endpoint
+
+    SentenceTransformer = importlib.import_module("sentence_transformers").SentenceTransformer
 
     # Resolve device
     if device_cfg == "auto":
@@ -101,6 +110,8 @@ def _load_model(cfg: Config | None = None):
     if local_path:
         model = SentenceTransformer(local_path, device=device)
     else:
+        if not _remote_model_download_available(hf_endpoint):
+            raise RuntimeError("Hugging Face is unreachable and no local embedding model was found")
         # HuggingFace fallback: SentenceTransformer handles download internally
         _log.info("[embed] downloading model %s from HuggingFace", model_name)
         model = SentenceTransformer(model_name, device=device)
@@ -124,10 +135,15 @@ def _resolve_model_path(model_name: str, cache_dir: str, source: str) -> str | N
     if source != "modelscope":
         return None
 
+    local_path = _find_local_model_path(model_name, cache_dir)
+    if local_path:
+        return local_path
+
     try:
         from modelscope import snapshot_download
     except ImportError:
         return None
+    logging.getLogger("modelscope").setLevel(logging.ERROR)
 
     # Check if already cached locally
     try:
@@ -143,6 +159,58 @@ def _resolve_model_path(model_name: str, cache_dir: str, source: str) -> str | N
     except Exception as e:
         _log.warning("[embed] ModelScope download failed: %s, falling back to HuggingFace", e)
     return None
+
+
+def _looks_like_sentence_transformer_dir(path: Path) -> bool:
+    """Heuristic for a locally cached sentence-transformers model directory."""
+    return (
+        path.is_dir()
+        and (path / "modules.json").exists()
+        and (path / "config_sentence_transformers.json").exists()
+        and ((path / "model.safetensors").exists() or (path / "pytorch_model.bin").exists())
+    )
+
+
+def _find_local_model_path(model_name: str, cache_dir: str) -> str | None:
+    """Return a directly discoverable cached ModelScope model path, if present."""
+    parts = model_name.split("/", 1)
+    if len(parts) != 2:
+        return None
+
+    org, repo = parts
+    root = Path(cache_dir).expanduser()
+    org_dir = root / org
+    if not org_dir.exists():
+        return None
+
+    repo_variants = [repo, repo.replace(".", "_"), repo.replace(".", "___")]
+    for variant in repo_variants:
+        candidate = org_dir / variant
+        if _looks_like_sentence_transformer_dir(candidate):
+            return str(candidate)
+
+    for candidate in org_dir.iterdir():
+        if (
+            candidate.is_dir()
+            and candidate.name.startswith(repo.split(".", 1)[0])
+            and _looks_like_sentence_transformer_dir(candidate)
+        ):
+            return str(candidate)
+
+    return None
+
+
+@lru_cache(maxsize=8)
+def _remote_model_download_available(hf_endpoint: str) -> bool:
+    """Cheap preflight before triggering sentence-transformers remote retries."""
+    url = (hf_endpoint or "https://huggingface.co").rstrip("/")
+    try:
+        import requests as _req
+
+        response = _req.get(url, timeout=2, allow_redirects=True)
+        return response.status_code < 500
+    except Exception:
+        return False
 
 
 # ============================================================================

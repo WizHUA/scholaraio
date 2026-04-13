@@ -1,14 +1,9 @@
-# ScholarAIO — Cursor Rules
+# ScholarAIO Cursor Rules (Legacy)
 
-This project is an AI-powered research terminal. Full project instructions are in `AGENTS.md` at the repository root. **Read `AGENTS.md` before proceeding with any task.**
+Cursor's current native project-rule entry, checked against official Cursor
+rules documentation on 2026-04-10, is `.cursor/rules/scholaraio.mdc`. This
+legacy `.cursorrules` file is kept only for older Cursor versions.
 
-## Quick Reference
-
-- CLI entry point: `scholaraio --help`
-- Python package: `scholaraio/`
-- Paper data: `data/papers/<Author-Year-Title>/` (meta.json + paper.md)
-- User output: always write to `workspace/`, never to project root or `scholaraio/`
-- Skills (reusable workflows): `.claude/skills/*/SKILL.md`
-- Tests: `python -m pytest tests/ -v`
-- Code style: Google-style docstrings for library modules, Chinese for CLI output, English for code comments
-- Config: `config.yaml` (git-tracked), `config.local.yaml` (secrets, not tracked)
+Read `.cursor/rules/scholaraio.mdc` first, then read `AGENTS.md` for the full
+project instructions. Use `.claude/skills/*/SKILL.md` as reusable workflows and
+`scholaraio --help` as the CLI entry point.

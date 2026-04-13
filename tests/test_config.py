@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from scholaraio.config import _build_config, _deep_merge, load_config
 
 
@@ -77,6 +79,66 @@ class TestBuildConfig:
         assert cfg.ingest.extractor == "robust"
         assert cfg.ingest.chunk_page_limit == 100
         assert cfg.ingest.mineru_batch_size == 20
+        assert cfg.ingest.mineru_upload_workers == 4
+        assert cfg.ingest.mineru_upload_retries == 3
+        assert cfg.ingest.mineru_download_retries == 3
+        assert cfg.ingest.mineru_poll_timeout == 900
+        assert cfg.ingest.pdf_preferred_parser == "mineru"
+        assert cfg.ingest.pdf_fallback_order == ["auto"]
+        assert cfg.ingest.pdf_fallback_auto_detect is True
+
+    def test_ingest_fallback_order_override(self, tmp_path):
+        cfg = _build_config(
+            {
+                "ingest": {
+                    "pdf_preferred_parser": "docling",
+                    "pdf_fallback_order": ["pymupdf"],
+                    "pdf_fallback_auto_detect": False,
+                }
+            },
+            tmp_path,
+        )
+        assert cfg.ingest.pdf_preferred_parser == "docling"
+        assert cfg.ingest.pdf_fallback_order == ["pymupdf"]
+        assert cfg.ingest.pdf_fallback_auto_detect is False
+
+    def test_ingest_fallback_order_accepts_single_string(self, tmp_path):
+        cfg = _build_config({"ingest": {"pdf_fallback_order": "auto"}}, tmp_path)
+        assert cfg.ingest.pdf_fallback_order == ["auto"]
+
+    def test_ingest_choice_fields_are_case_insensitive(self, tmp_path):
+        cfg = _build_config(
+            {
+                "ingest": {
+                    "mineru_backend_local": "Pipeline",
+                    "mineru_parse_method": "OCR",
+                    "pdf_preferred_parser": "Docling",
+                }
+            },
+            tmp_path,
+        )
+        assert cfg.ingest.mineru_backend_local == "pipeline"
+        assert cfg.ingest.mineru_parse_method == "ocr"
+        assert cfg.ingest.pdf_preferred_parser == "docling"
+
+    def test_ingest_fallback_order_ignores_null_and_non_string_entries(self, tmp_path):
+        cfg = _build_config({"ingest": {"pdf_fallback_order": ["auto", None, 123, "docling"]}}, tmp_path)
+        assert cfg.ingest.pdf_fallback_order == ["auto", "docling"]
+
+    def test_ingest_fallback_order_invalid_scalar_type_warns_and_uses_default(self, tmp_path, caplog):
+        with caplog.at_level(logging.WARNING):
+            cfg = _build_config({"ingest": {"pdf_fallback_order": 123}}, tmp_path)
+
+        assert cfg.ingest.pdf_fallback_order == ["auto"]
+        assert "invalid string-list config value" in caplog.text
+
+    def test_ingest_fallback_auto_detect_parses_string_bool(self, tmp_path):
+        cfg = _build_config({"ingest": {"pdf_fallback_auto_detect": "false"}}, tmp_path)
+        assert cfg.ingest.pdf_fallback_auto_detect is False
+
+    def test_ingest_fallback_auto_detect_none_uses_default(self, tmp_path):
+        cfg = _build_config({"ingest": {"pdf_fallback_auto_detect": None}}, tmp_path)
+        assert cfg.ingest.pdf_fallback_auto_detect is True
 
     def test_null_sections_handled(self, tmp_path):
         data = {"llm": None, "paths": None}
@@ -88,6 +150,105 @@ class TestBuildConfig:
         data = {"zotero": {"library_id": 12345}}
         cfg = _build_config(data, tmp_path)
         assert cfg.zotero.library_id == "12345"
+
+    def test_translate_defaults_are_exposed(self, tmp_path):
+        cfg = _build_config({}, tmp_path)
+        assert cfg.translate.auto_translate is False
+        assert cfg.translate.target_lang == "zh"
+        assert cfg.translate.chunk_size == 4000
+        assert cfg.translate.concurrency == 20
+
+    def test_zotero_library_type_default_and_override(self, tmp_path):
+        cfg = _build_config({}, tmp_path)
+        assert cfg.zotero.library_type == "user"
+
+        cfg2 = _build_config({"zotero": {"library_type": "group"}}, tmp_path)
+        assert cfg2.zotero.library_type == "group"
+
+    def test_mineru_formula_and_table_null_use_defaults(self, tmp_path):
+        data = {
+            "ingest": {
+                "mineru_enable_formula": None,
+                "mineru_enable_table": None,
+            }
+        }
+        cfg = _build_config(data, tmp_path)
+        assert cfg.ingest.mineru_enable_formula is True
+        assert cfg.ingest.mineru_enable_table is True
+
+    def test_invalid_mineru_pdf_cloud_settings_fall_back_to_safe_defaults(self, tmp_path):
+        data = {
+            "ingest": {
+                "mineru_backend_local": "unknown-backend",
+                "mineru_model_version_cloud": "MinerU-HTML",
+                "mineru_lang": "",
+                "mineru_parse_method": "bad-mode",
+                "mineru_batch_size": 999,
+                "pdf_preferred_parser": "bad-parser",
+            }
+        }
+        cfg = _build_config(data, tmp_path)
+        assert cfg.ingest.mineru_backend_local == "pipeline"
+        assert cfg.ingest.mineru_model_version_cloud == "pipeline"
+        assert cfg.ingest.mineru_lang == "ch"
+        assert cfg.ingest.mineru_parse_method == "auto"
+        assert cfg.ingest.mineru_batch_size == 200
+        assert cfg.ingest.pdf_preferred_parser == "mineru"
+
+    def test_mineru_lang_is_normalized_to_lowercase(self, tmp_path):
+        cfg = _build_config({"ingest": {"mineru_lang": " EN "}}, tmp_path)
+        assert cfg.ingest.mineru_lang == "en"
+
+    def test_mineru_cloud_model_version_is_case_insensitive(self, tmp_path):
+        cfg = _build_config({"ingest": {"mineru_model_version_cloud": " VLM "}}, tmp_path)
+        assert cfg.ingest.mineru_model_version_cloud == "vlm"
+
+    def test_zero_or_negative_mineru_batch_size_uses_default(self, tmp_path):
+        cfg = _build_config({"ingest": {"mineru_batch_size": 0}}, tmp_path)
+        assert cfg.ingest.mineru_batch_size == 20
+
+    def test_embed_env_vars_override_yaml(self, tmp_path, monkeypatch):
+        data = {
+            "embed": {
+                "source": "modelscope",
+                "cache_dir": "/yaml-cache",
+                "model": "yaml-model",
+            }
+        }
+        monkeypatch.setenv("SCHOLARAIO_EMBED_SOURCE", "huggingface")
+        monkeypatch.setenv("SCHOLARAIO_EMBED_CACHE_DIR", "/env-cache")
+        monkeypatch.setenv("SCHOLARAIO_EMBED_MODEL", "env-model")
+        cfg = _build_config(data, tmp_path)
+        assert cfg.embed.source == "huggingface"
+        assert cfg.embed.cache_dir == "/env-cache"
+        assert cfg.embed.model == "env-model"
+
+    def test_scholaraio_hf_endpoint_wins_over_hf_endpoint(self, tmp_path, monkeypatch):
+        data = {"embed": {"hf_endpoint": "https://yaml-mirror.example"}}
+        monkeypatch.setenv("SCHOLARAIO_HF_ENDPOINT", "https://scholaraio-mirror.example")
+        monkeypatch.setenv("HF_ENDPOINT", "https://generic-mirror.example")
+        cfg = _build_config(data, tmp_path)
+        assert cfg.embed.hf_endpoint == "https://scholaraio-mirror.example"
+
+    def test_empty_embed_env_vars_do_not_override_yaml(self, tmp_path, monkeypatch):
+        data = {
+            "embed": {
+                "source": "huggingface",
+                "cache_dir": "/yaml-cache",
+                "model": "yaml-model",
+                "hf_endpoint": "https://yaml-mirror.example",
+            }
+        }
+        monkeypatch.setenv("SCHOLARAIO_EMBED_SOURCE", "")
+        monkeypatch.setenv("SCHOLARAIO_EMBED_CACHE_DIR", "")
+        monkeypatch.setenv("SCHOLARAIO_EMBED_MODEL", "")
+        monkeypatch.setenv("SCHOLARAIO_HF_ENDPOINT", "")
+        monkeypatch.setenv("HF_ENDPOINT", "")
+        cfg = _build_config(data, tmp_path)
+        assert cfg.embed.source == "huggingface"
+        assert cfg.embed.cache_dir == "/yaml-cache"
+        assert cfg.embed.model == "yaml-model"
+        assert cfg.embed.hf_endpoint == "https://yaml-mirror.example"
 
 
 class TestConfigProperties:
@@ -120,9 +281,11 @@ class TestEnsureDirs:
         cfg.ensure_dirs()
         assert cfg.papers_dir.exists()
         assert (tmp_path / "data" / "inbox").exists()
+        assert (tmp_path / "data" / "inbox-proceedings").exists()
         assert (tmp_path / "data" / "inbox-thesis").exists()
         assert (tmp_path / "data" / "inbox-doc").exists()
         assert (tmp_path / "data" / "pending").exists()
+        assert (tmp_path / "data" / "proceedings").exists()
         assert (tmp_path / "workspace").exists()
 
     def test_idempotent(self, tmp_path):
@@ -175,6 +338,12 @@ class TestResolvedApiKey:
         cfg = _build_config({}, tmp_path)
         monkeypatch.setenv("MINERU_API_KEY", "mu-env")
         assert cfg.resolved_mineru_api_key() == "mu-env"
+
+    def test_mineru_token_env_wins_over_legacy_api_key_env(self, tmp_path, monkeypatch):
+        cfg = _build_config({}, tmp_path)
+        monkeypatch.setenv("MINERU_TOKEN", "new-token")
+        monkeypatch.setenv("MINERU_API_KEY", "legacy-token")
+        assert cfg.resolved_mineru_api_key() == "new-token"
 
     def test_s2_key_from_config(self, tmp_path):
         cfg = _build_config({"ingest": {"s2_api_key": "s2-cfg"}}, tmp_path)

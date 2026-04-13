@@ -1,9 +1,15 @@
-"""Tests for scholaraio.ingest.extractor — factory and RegexExtractor."""
+"""Tests for scholaraio.ingest.extractor — factory and metadata extractors."""
 
 from __future__ import annotations
 
 from scholaraio.config import _build_config
-from scholaraio.ingest.extractor import RegexExtractor, _clean_llm_str, get_extractor
+from scholaraio.ingest.extractor import (
+    LLMExtractor,
+    RegexExtractor,
+    RobustExtractor,
+    _clean_llm_str,
+    get_extractor,
+)
 
 
 class TestCleanLLMStr:
@@ -43,6 +49,52 @@ class TestRegexExtractor:
         meta = ext.extract(md)
         assert meta.title == "Test Paper Title"
         assert meta.doi == "10.1234/test.2023"
+
+
+class TestLLMExtractor:
+    def test_preserves_arxiv_id_from_filename(self, tmp_path, monkeypatch):
+        md = tmp_path / "2603.25457v1.md"
+        md.write_text(
+            "# Universal transport laws in buoyancy-driven porous mixing\n\nMarco De Paoli\n",
+            encoding="utf-8",
+        )
+
+        cfg = _build_config({"llm": {"api_key": "test-key"}}, tmp_path)
+        ext = LLMExtractor(cfg.llm, api_key="test-key")
+        monkeypatch.setattr(
+            ext,
+            "_call_api",
+            lambda header: (
+                '{"title":"Universal transport laws in buoyancy-driven porous mixing","authors":["Marco De Paoli"],"year":2025,"doi":null,"journal":"arXiv"}'
+            ),
+        )
+
+        meta = ext.extract(md)
+
+        assert meta.arxiv_id == "2603.25457"
+
+
+class TestRobustExtractor:
+    def test_preserves_regex_arxiv_id(self, tmp_path, monkeypatch):
+        md = tmp_path / "2603.25457v1.md"
+        md.write_text(
+            "# Universal transport laws in buoyancy-driven porous mixing\n\nMarco De Paoli\n",
+            encoding="utf-8",
+        )
+
+        cfg = _build_config({"llm": {"api_key": "test-key"}}, tmp_path)
+        ext = RobustExtractor(cfg.llm, api_key="test-key")
+        monkeypatch.setattr(
+            ext,
+            "_call_api",
+            lambda prompt: (
+                '{"title":"Universal transport laws in buoyancy-driven porous mixing","authors":["Marco De Paoli"],"year":2025,"doi":null,"journal":"arXiv"}'
+            ),
+        )
+
+        meta = ext.extract(md)
+
+        assert meta.arxiv_id == "2603.25457"
 
 
 class TestGetExtractor:

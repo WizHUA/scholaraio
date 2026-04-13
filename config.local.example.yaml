@@ -9,8 +9,8 @@
 llm:
   api_key: ""
 
-# MinerU API key — for PDF → Markdown conversion
-# MinerU API 密钥——用于 PDF 转 Markdown
+# MinerU token — for `mineru-open-api extract`
+# MinerU token——用于 `mineru-open-api extract`
 # Free tier 免费申请: https://mineru.net/apiManage/token
 # Or self-host 或本地部署: https://github.com/opendatalab/MinerU
 ingest:
@@ -23,8 +23,11 @@ ingest:
 # Zotero integration (optional) Zotero 集成（可选）
 # API key: https://www.zotero.org/settings/keys
 # Library ID: visible in your Zotero web library URL
+# Library type: user or group (default user)
 # API 密钥：https://www.zotero.org/settings/keys
 # Library ID：在 Zotero 网页版 URL 中可见
+# Library 类型：user 或 group（默认 user）
 zotero:
   api_key: ""
   library_id: ""
+  library_type: "user"

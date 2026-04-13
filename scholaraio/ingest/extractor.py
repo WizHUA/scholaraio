@@ -132,10 +132,12 @@ class LLMExtractor:
             PaperMetadata,
             _extract_from_filename,
             _extract_lastname,
+            extract_metadata_from_markdown,
         )
 
         text = filepath.read_text(encoding="utf-8", errors="replace")
         header = text[:50000]
+        regex_meta = extract_metadata_from_markdown(filepath, text=text)
 
         try:
             raw_json = self._call_api(header)
@@ -152,6 +154,7 @@ class LLMExtractor:
         meta.year = data.get("year") if isinstance(data.get("year"), int) else None
         meta.doi = _clean_llm_str(data.get("doi"))
         meta.journal = _clean_llm_str(data.get("journal"))
+        meta.arxiv_id = regex_meta.arxiv_id
 
         if meta.authors:
             meta.first_author = meta.authors[0]
@@ -299,7 +302,6 @@ class RobustExtractor:
     def extract(self, filepath: Path) -> PaperMetadata:
         from scholaraio.ingest.metadata import (
             PaperMetadata,
-            _extract_from_filename,
             _extract_lastname,
         )
 
@@ -350,13 +352,14 @@ class RobustExtractor:
             else:
                 meta.doi = llm_doi or regex_meta.doi or ""
         meta.journal = _clean_llm_str(data.get("journal")) or regex_meta.journal or ""
+        meta.arxiv_id = regex_meta.arxiv_id
 
         if meta.authors:
             meta.first_author = meta.authors[0]
             meta.first_author_lastname = _extract_lastname(meta.first_author)
 
         # Filename fallback for anything still missing
-        fb = _extract_from_filename(filepath)
+        fb = regex_meta
         if not meta.title:
             meta.title = fb.title
         if not meta.year:

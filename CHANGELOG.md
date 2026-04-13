@@ -9,15 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **Semantic Scholar API key support**: Configure `ingest.s2_api_key` (or env var `S2_API_KEY`) to authenticate Semantic Scholar requests, increasing rate limits from 100 req/5min (public) to 1 req/s (authenticated); polite delay automatically reduced from 3s to 1s when key is present
+- **Cursor native project rules**: Added `.cursor/rules/scholaraio.mdc` as the primary Cursor integration path, with `AGENTS.md` as the shared multi-agent instruction source and `.cursorrules` kept only as a legacy fallback
 
 ### Fixed
 
-- **Zotero LaTeX filename too long** ([#32](https://github.com/ZimoLiao/scholaraio/issues/32)): Titles containing LaTeX math (e.g. `$\mathrm{La}{\mathrm{BH}}_8$`) or HTML/MathML entities now get properly cleaned before directory naming; added 255-byte filename length limit as safety net
+- **Cursor compatibility CI coverage**: Added regression coverage to keep the Cursor rule wrapper lightweight and explicitly MCP-free
+- **Proceedings routing test stability**: Tests no longer assume the first `data/proceedings` entry is a proceedings volume directory, avoiding CI-only failures when `proceedings.db` sorts before real volume folders
+
+## [1.3.0] — 2026-04-06
+
+### Added
+
+- **AI-for-Science foundation**: ScholarAIO v1.3.0 pushes the project beyond a paper-centric research terminal toward an AI-for-Science runtime. Added five lightweight scientific-computing domains for agents: Quantum ESPRESSO, LAMMPS, GROMACS, OpenFOAM, and bioinformatics
+- **Versioned scientific tool docs via `toolref`**: Added `scholaraio toolref fetch/list/show/search/use` plus the top-level `scholaraio.toolref` facade so agents can query exact official interfaces at runtime instead of guessing parameters from memory. Current indexed coverage includes Quantum ESPRESSO, LAMMPS, GROMACS, OpenFOAM, and curated bioinformatics tools
+- **Extensible onboarding for new scientific software**: Added a dedicated scientific-tool onboarding workflow so ScholarAIO can keep incorporating user-requested tools through official-doc ingestion, `toolref` integration, lightweight skill design, and end-to-end CLI verification, rather than being limited to the five tools already onboarded
+- **Toolref-first scientific runtime design**: Aligned tool-specific scientific skills around a clear separation of concerns: papers and notes hold scientific context, skills hold workflow and judgment, and `toolref` holds exact interface details. This keeps skills lightweight while letting agents stay grounded in both literature and tool docs
+- **Semantic Scholar API key support**: Configure `ingest.s2_api_key` (or env var `S2_API_KEY`) to authenticate Semantic Scholar requests, increasing rate limits from 100 req/5min (public) to 1 req/s (authenticated); polite delay automatically reduced from 3s to 1s when key is present
+- **PDF parser benchmark harness**: Added `scholaraio/ingest/parser_matrix_benchmark.py` plus tests for comparing Docling / MinerU / PyMuPDF parser runs and configuration matrices
+- **Parser-aware setup guidance**: `scholaraio setup` and the setup skill now explain MinerU vs Docling selection, provide official deployment links, note that MinerU tokens for `mineru-open-api` are free to apply for, and warn agent users about sandbox/network mis-detection
+- **Insights analytics module coverage**: `scholaraio.insights` now owns reusable behavior-analysis helpers, with dedicated tests plus CLI smoke coverage for `scholaraio insights`
+
+### Fixed
+
+- **PDF parser fallback flow**: Batch conversion and `attach-pdf` now follow the same MinerU → fallback behavior as the main ingest path; fallback assets are preserved; unsupported parser options from the previous broader design were removed so the active chain matches the current MinerU / Docling / PyMuPDF strategy
+- **MinerU cloud backend + chunking limits**: All MinerU cloud ingest entrypoints now use the `mineru-open-api` / ModelScope-backed path instead of the old raw API flow, and cloud chunk planning now respects both the 600-page and 200MB single-file limits with size-aware chunk estimation
+- **Proceedings ingest routing**: Regular `data/inbox/` items no longer auto-route into `data/proceedings/`; proceedings now enter that workflow only through the dedicated `data/inbox-proceedings/` inbox, and misclassified real-library proceedings shells were cleaned back into normal paper ingest
+- **Setup robustness for agents**: `setup` / `setup check` no longer fail hard when `metrics.db` is locked, parser recommendations honor an already-configured MinerU token before network probing, and interactive prompts treat EOF as empty input so agent-driven stdin does not crash the wizard
+- **Docs consistency**: README, README_CN, AGENTS, and CLAUDE now describe the current parser stack and setup behavior consistently
+- **arXiv ingest edge cases**: `scholaraio.sources.arxiv` no longer makes `bs4` a transitive hard dependency for normal metadata flows, and old-style arXiv IDs like `hep-th/9901001` now create parent directories correctly during PDF download
+- **Scientific runtime docs compatibility**: toolref runtime behavior, scientific skills, and published setup/docs metadata now match the refactored `toolref` facade and current public CLI/package surface
+- **Optional dependency guidance**: missing-dependency messages and `setup check` now consistently point users to `scholaraio[import]`, `scholaraio[pdf]`, `scholaraio[office]`, and `scholaraio[draw]` instead of raw leaf packages
+- **Translate / enrich CLI feedback and recovery**: `translate` now reports chunk-level progress, persists per-chunk state in `.translate_{lang}/`, resumes unfinished work safely, and avoids writing fake success output when every chunk fails; `enrich-toc` now reports start/success/failure with extracted TOC counts for single-paper runs
+- **Workspace removal and refetch status accuracy**: `ws remove` now falls back to exact workspace `dir_name` matching when registry lookup misses, and `refetch` no longer reports spurious updates when API enrichment returns no authoritative data
 
 ### Removed
 
 - **MCP server**: Removed `scholaraio/mcp_server.py` (1585 lines, 32 tools) and the `scholaraio-mcp` entry point. All agent interactions now go through CLI + skills, which are agent-agnostic and supported across Claude Code, Codex, Cursor, Windsurf, Cline, and GitHub Copilot. The `[mcp]` optional dependency group has also been removed.
+
+## [1.2.0] — 2026-03-26
+
+### Added
+
+- **Agent analysis notes (T2)**: Per-paper `notes.md` for persistent cross-session analysis notes; `show` now auto-displays existing notes, `show --append-notes` appends new notes, and `loader.load_notes()` / `loader.append_notes()` expose the workflow in Python
+- **Context management guidance**: Workspace skill and 4 academic writing skills updated with `notes.md` read/write workflow and large-content delegation guidance for subagent-heavy analysis
+
+### Fixed
+
+- **Zotero LaTeX filename too long** ([#32](https://github.com/ZimoLiao/scholaraio/issues/32)): Titles containing LaTeX math (e.g. `$\mathrm{La}{\mathrm{BH}}_8$`) or HTML/MathML entities now get properly cleaned before directory naming; added 255-byte filename length limit as safety net
 
 ## [1.1.0] — 2026-03-24
 
@@ -58,10 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - **Workspace batch add**: `ws add` now supports `--search "<query>"`, `--topic <id>`, and `--all` flags for bulk paper addition, with `--top`/`--year`/`--journal`/`--type` filter support
-- **Agent analysis notes (T2)**: Per-paper `notes.md` for persistent cross-session analysis notes; `loader.load_notes()` and `loader.append_notes()` API
 - **PDF optional dependency**: `pymupdf` declared in `pyproject.toml` as `[pdf]` extra (included in `[full]`), fixing undeclared dependency for long PDF splitting
 - **Subagent information tiers**: T1/T2/T3 architecture documented in CLAUDE.md and AGENTS.md for structured context management
-- **Context management guidance**: Workspace skill and 4 academic writing skills updated with notes.md read/write workflow and large-content delegation guidelines
 
 ### Fixed
 
@@ -71,7 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Knowledge Base
 
-- PDF ingestion via MinerU (cloud API / local), with auto-splitting for long PDFs (>100 pages)
+- PDF ingestion via MinerU (local API / `mineru-open-api` cloud CLI), with auto-splitting for long PDFs (>100 pages)
 - Three inboxes: regular papers (`inbox/`), theses (`inbox-thesis/`), general documents (`inbox-doc/`)
 - DOI-based deduplication; unresolved papers held in `pending/` for manual review
 - Metadata extraction with 4 modes: regex, auto (regex + LLM fallback), robust (regex + LLM cross-check), llm

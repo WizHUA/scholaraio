@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import re
 from pathlib import Path
-
-from endnote_utils.core import (
-    iter_records_ris,
-    iter_records_xml,
-    process_record_xml,
-)
 
 from scholaraio.ingest.metadata._extract import _extract_lastname
 from scholaraio.ingest.metadata._models import PaperMetadata
@@ -38,6 +33,11 @@ _SI_PATTERN = re.compile(
     r"(?:^|[-_ ])(?:SI|[Ss]uppl(?:ement(?:ary)?)?|[Ss]upporting)"
     r"|[-_ ](?:S\d+|Table\s*S\d+|Figure\s*S\d+)\.pdf$",
 )
+
+
+def _load_endnote_core():
+    """Load ``endnote_utils.core`` lazily so import extras stay optional."""
+    return importlib.import_module("endnote_utils.core")
 
 
 # ============================================================================
@@ -175,6 +175,7 @@ def parse_endnote(paths: list[Path]) -> list[PaperMetadata]:
         所有文件中解析出的 ``PaperMetadata`` 列表。
     """
     results: list[PaperMetadata] = []
+    core = _load_endnote_core()
 
     for path in paths:
         suffix = path.suffix.lower()
@@ -182,13 +183,13 @@ def parse_endnote(paths: list[Path]) -> list[PaperMetadata]:
 
         if suffix == ".xml":
             _log.info("解析 Endnote XML: %s", path)
-            for elem in iter_records_xml(path):
-                rec = process_record_xml(elem, "endnote")
+            for elem in core.iter_records_xml(path):
+                rec = core.process_record_xml(elem, "endnote")
                 results.append(_record_to_meta(rec, source_file))
 
         elif suffix == ".ris":
             _log.info("解析 Endnote RIS: %s", path)
-            for rec in iter_records_ris(path):
+            for rec in core.iter_records_ris(path):
                 results.append(_record_to_meta(rec, source_file))
 
         else:
@@ -216,6 +217,7 @@ def parse_endnote_full(
     """
     records: list[PaperMetadata] = []
     pdf_paths: list[Path | None] = []
+    core = _load_endnote_core()
 
     for path in paths:
         suffix = path.suffix.lower()
@@ -228,8 +230,8 @@ def parse_endnote_full(
             if not has_data_dir:
                 _log.debug("Endnote Data 目录不存在: %s", data_dir)
 
-            for elem in iter_records_xml(path):
-                rec = process_record_xml(elem, "endnote")
+            for elem in core.iter_records_xml(path):
+                rec = core.process_record_xml(elem, "endnote")
                 records.append(_record_to_meta(rec, source_file))
 
                 # Extract PDF path from same element
@@ -241,7 +243,7 @@ def parse_endnote_full(
 
         elif suffix == ".ris":
             _log.info("解析 Endnote RIS: %s", path)
-            for rec in iter_records_ris(path):
+            for rec in core.iter_records_ris(path):
                 records.append(_record_to_meta(rec, source_file))
                 pdf_paths.append(None)
 

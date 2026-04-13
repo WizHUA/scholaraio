@@ -2,16 +2,16 @@
 
 Verifies: create initializes workspace, read_paper_ids returns correct set,
 internal consistency of papers.json is maintained.
-Does NOT test: add/remove (requires index DB with lookup_paper).
 """
 
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
-from scholaraio.workspace import add, create, list_workspaces, read_paper_ids, rename, validate_workspace_name
+from scholaraio.workspace import add, create, list_workspaces, read_paper_ids, remove, rename, validate_workspace_name
 
 
 class TestWorkspaceCreate:
@@ -81,6 +81,59 @@ class TestAddResolved:
         assert len(added2) == 1
         assert added2[0]["id"] == "cccc-3333"
         assert read_paper_ids(ws_dir) == {"aaaa-1111", "bbbb-2222", "cccc-3333"}
+
+
+class TestRemove:
+    def test_remove_falls_back_to_workspace_dir_name_when_lookup_misses(self, tmp_path, monkeypatch):
+        ws_dir = tmp_path / "ws"
+        create(ws_dir)
+        entries = [
+            {"id": "aaaa-1111", "dir_name": "Smith-2023-Test", "added_at": "2024-01-01"},
+            {"id": "bbbb-2222", "dir_name": "Wang-2024-Test", "added_at": "2024-01-01"},
+        ]
+        (ws_dir / "papers.json").write_text(json.dumps(entries), encoding="utf-8")
+
+        monkeypatch.setattr("scholaraio.index.lookup_paper", lambda db_path, ref: None)
+
+        removed = remove(ws_dir, ["Smith-2023-Test"], tmp_path / "index.db")
+
+        assert [e["dir_name"] for e in removed] == ["Smith-2023-Test"]
+        assert read_paper_ids(ws_dir) == {"bbbb-2222"}
+
+    def test_remove_lookup_miss_does_not_delete_uuid_collision_entry(self, tmp_path, monkeypatch):
+        ws_dir = tmp_path / "ws"
+        create(ws_dir)
+        entries = [
+            {"id": "real-uuid-1", "dir_name": "SharedRef", "added_at": "2024-01-01"},
+            {"id": "SharedRef", "dir_name": "Other-Paper", "added_at": "2024-01-01"},
+        ]
+        (ws_dir / "papers.json").write_text(json.dumps(entries), encoding="utf-8")
+
+        monkeypatch.setattr("scholaraio.index.lookup_paper", lambda db_path, ref: None)
+
+        removed = remove(ws_dir, ["SharedRef"], tmp_path / "index.db")
+
+        assert [e["dir_name"] for e in removed] == ["Other-Paper"]
+        assert read_paper_ids(ws_dir) == {"real-uuid-1"}
+
+    def test_remove_falls_back_when_lookup_raises_sqlite_error(self, tmp_path, monkeypatch):
+        ws_dir = tmp_path / "ws"
+        create(ws_dir)
+        entries = [
+            {"id": "aaaa-1111", "dir_name": "Smith-2023-Test", "added_at": "2024-01-01"},
+            {"id": "bbbb-2222", "dir_name": "Wang-2024-Test", "added_at": "2024-01-01"},
+        ]
+        (ws_dir / "papers.json").write_text(json.dumps(entries), encoding="utf-8")
+
+        def fail_lookup(db_path, ref):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr("scholaraio.index.lookup_paper", fail_lookup)
+
+        removed = remove(ws_dir, ["Smith-2023-Test"], tmp_path / "index.db")
+
+        assert [e["dir_name"] for e in removed] == ["Smith-2023-Test"]
+        assert read_paper_ids(ws_dir) == {"bbbb-2222"}
 
 
 class TestListWorkspaces:

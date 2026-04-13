@@ -13,8 +13,10 @@ LLM API key lookup order:
 
 1. `config.local.yaml` → `llm.api_key`
 2. Environment variable `SCHOLARAIO_LLM_API_KEY`
-3. Environment variable `DEEPSEEK_API_KEY`
-4. Environment variable `OPENAI_API_KEY`
+3. Backend-specific environment variables, based on `llm.backend`:
+   - `openai-compat`: `DEEPSEEK_API_KEY` → `OPENAI_API_KEY`
+   - `anthropic`: `ANTHROPIC_API_KEY`
+   - `google`: `GOOGLE_API_KEY` → `GEMINI_API_KEY`
 
 ### Example `config.local.yaml`
 
@@ -23,8 +25,15 @@ llm:
   api_key: "sk-your-key-here"
 
 ingest:
-  mineru_api_key: "your-mineru-key"
+  mineru_api_key: "your-mineru-token"  # compatibility alias; MINERU_TOKEN is preferred
+  s2_api_key: "your-semantic-scholar-key"  # optional
+
+zotero:
+  api_key: "your-zotero-key"  # optional
+  library_id: "1234567"  # optional
 ```
+
+You can also keep the token out of YAML entirely and set `MINERU_TOKEN` in the environment. `MINERU_API_KEY` is still accepted as a compatibility alias.
 
 ## Key Settings
 
@@ -35,7 +44,7 @@ Default: DeepSeek (`deepseek-chat`) via OpenAI-compatible protocol.
 ```yaml
 llm:
   model: deepseek-chat
-  base_url: https://api.deepseek.com/v1
+  base_url: https://api.deepseek.com
 ```
 
 ### Metadata Extraction

@@ -74,7 +74,7 @@ def inspect_pptx(path: Path) -> str:
         from pptx import Presentation
         from pptx.enum.shapes import MSO_SHAPE_TYPE
     except ImportError:
-        raise ImportError("python-pptx 未安装，请运行: pip install python-pptx")
+        raise ImportError("python-pptx 未安装，请运行: pip install scholaraio[office]")
 
     prs = Presentation(str(path))
     sw = (prs.slide_width or 0) / _EMU_PER_INCH
@@ -225,7 +225,7 @@ def inspect_docx(path: Path) -> str:
         from docx.table import Table
         from docx.text.paragraph import Paragraph
     except ImportError:
-        raise ImportError("python-docx 未安装，请运行: pip install python-docx")
+        raise ImportError("python-docx 未安装，请运行: pip install scholaraio[office]")
 
     doc = Document(str(path))
 
@@ -351,7 +351,7 @@ def inspect_xlsx(path: Path) -> str:
     try:
         import openpyxl
     except ImportError:
-        raise ImportError("openpyxl 未安装，请运行: pip install openpyxl")
+        raise ImportError("openpyxl 未安装，请运行: pip install scholaraio[office]")
 
     wb = openpyxl.load_workbook(str(path), read_only=False, data_only=True)
     try:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from scholaraio.index import build_index, lookup_paper, search
+from scholaraio.index import build_index, lookup_paper, search, unified_search
 
 
 class TestBuildAndSearch:
@@ -86,6 +86,19 @@ class TestBuildAndSearch:
                 ("aaaa-1111",),
             ).fetchall()
         assert [row[0] for row in rows] == ["10.1000/classic", "10.1000/second"]
+
+    def test_unified_search_degrades_to_fts_when_vector_search_runtime_fails(self, tmp_papers, tmp_db, monkeypatch):
+        build_index(tmp_papers, tmp_db)
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("proxy unavailable")
+
+        monkeypatch.setattr("scholaraio.vectors.vsearch", boom)
+
+        results = unified_search("turbulence", tmp_db)
+
+        assert len(results) >= 1
+        assert all(r["match"] == "fts" for r in results)
 
 
 class TestLookupPaper:

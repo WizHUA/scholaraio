@@ -102,6 +102,7 @@ class InboxCtx:
     is_thesis: bool = False  # thesis inbox or LLM-detected thesis
     is_patent: bool = False  # patent inbox or detected patent
     existing_pub_nums: dict[str, Path] | None = None  # patent publication number dedup
+    existing_arxiv_ids: dict[str, Path] | None = None  # arXiv preprint dedup
 
 
 # ============================================================================
@@ -142,7 +143,7 @@ def step_office_convert(ctx: InboxCtx) -> StepResult:
     try:
         from markitdown import MarkItDown
     except ImportError:
-        _log.error("MarkItDown 未安装，无法转换 Office 文件。请运行: pip install 'markitdown[docx,pptx,xlsx]'")
+        _log.error("MarkItDown 未安装，无法转换 Office 文件。请运行: pip install scholaraio[office]")
         ctx.status = "failed"
         return StepResult.FAIL
 
@@ -166,8 +167,9 @@ def step_mineru(ctx: InboxCtx) -> StepResult:
     """PDF → Markdown 转换（MinerU）。
 
     md-only 入库项（无 PDF）自动跳过。已有同名 ``.md`` 时也跳过。
-    本地 MinerU 不可达时自动 fallback 到云 API（需配置 ``mineru_api_key``）。
-    超长 PDF（超过 ``chunk_page_limit`` 页）自动切分后逐段转换再合并。
+    本地 MinerU 不可达时自动 fallback 到 MinerU 云端 CLI（需配置 ``mineru_api_key`` / token）。
+    超长 PDF 会在需要时自动切分后逐段转换再合并。
+    本地 MinerU 使用 ``chunk_page_limit``，云端 MinerU 同时遵循 600 页 / 200MB。
 
     Args:
         ctx: Inbox 上下文，转换后 ``ctx.md_path`` 指向生成的 ``.md``。
@@ -177,11 +179,20 @@ def step_mineru(ctx: InboxCtx) -> StepResult:
     """
     from scholaraio.ingest.mineru import (
         ConvertOptions,
+        ConvertResult,
         _convert_long_pdf,
         _convert_long_pdf_cloud,
         _get_pdf_page_count,
+        _plan_cloud_chunking,
         check_server,
         convert_pdf,
+        is_pdf_validation_error,
+        validate_pdf_for_mineru,
+    )
+    from scholaraio.ingest.pdf_fallback import (
+        convert_pdf_with_fallback,
+        preferred_parser_order,
+        prefers_fallback_parser,
     )
 
     # md-only entry (no PDF): skip MinerU entirely
@@ -209,50 +220,138 @@ def step_mineru(ctx: InboxCtx) -> StepResult:
     mineru_opts = ConvertOptions(
         api_url=ctx.cfg.ingest.mineru_endpoint,
         output_dir=ctx.inbox_dir,
+        backend=ctx.cfg.ingest.mineru_backend_local,
+        cloud_model_version=ctx.cfg.ingest.mineru_model_version_cloud,
+        lang=ctx.cfg.ingest.mineru_lang,
+        parse_method=ctx.cfg.ingest.mineru_parse_method,
+        formula_enable=ctx.cfg.ingest.mineru_enable_formula,
+        table_enable=ctx.cfg.ingest.mineru_enable_table,
+        upload_workers=ctx.cfg.ingest.mineru_upload_workers,
+        upload_retries=ctx.cfg.ingest.mineru_upload_retries,
+        download_retries=ctx.cfg.ingest.mineru_download_retries,
+        poll_timeout=ctx.cfg.ingest.mineru_poll_timeout,
     )
 
-    chunk_limit = getattr(ctx.cfg.ingest, "chunk_page_limit", 100)
-    page_count = _get_pdf_page_count(pdf_path)
-    is_long = page_count > chunk_limit
+    result = None
+    fallback_auto_detect = getattr(ctx.cfg.ingest, "pdf_fallback_auto_detect", True)
+    fallback_order = preferred_parser_order(
+        getattr(ctx.cfg.ingest, "pdf_preferred_parser", "mineru"),
+        getattr(ctx.cfg.ingest, "pdf_fallback_order", None),
+        auto_detect=fallback_auto_detect,
+    )
 
-    if is_long:
-        ui(f"Long PDF detected ({page_count} pages > {chunk_limit} limit), splitting...")
+    if prefers_fallback_parser(getattr(ctx.cfg.ingest, "pdf_preferred_parser", "mineru")):
+        ok, parser_name, err = convert_pdf_with_fallback(
+            pdf_path,
+            md_path,
+            parser_order=fallback_order,
+            auto_detect=fallback_auto_detect,
+        )
+        if not ok:
+            _log.error("preferred parser chain failed: %s", err)
+            ctx.status = "failed"
+            return StepResult.FAIL
+        ui(f"已按配置优先使用 {parser_name} 解析。")
+        ctx.md_path = md_path
+        return StepResult.OK
 
-    # Try local MinerU first, fallback to cloud API
-    if check_server(ctx.cfg.ingest.mineru_endpoint):
+    local_mineru_available = check_server(ctx.cfg.ingest.mineru_endpoint)
+    cloud_api_key = ""
+    if not local_mineru_available:
+        cloud_api_key = ctx.cfg.resolved_mineru_api_key()
+        if not cloud_api_key:
+            _log.warning("MinerU unreachable and no MinerU token, trying fallback parsers")
+            ok, parser_name, fallback_err = convert_pdf_with_fallback(
+                pdf_path,
+                md_path,
+                parser_order=fallback_order,
+                auto_detect=fallback_auto_detect,
+            )
+            if not ok:
+                _log.error("fallback parsers failed: %s", fallback_err)
+                ctx.status = "failed"
+                return StepResult.FAIL
+            ui(f"MinerU 不可用，已降级使用 {parser_name} 解析。")
+            ctx.md_path = md_path
+            return StepResult.OK
+
+    validation = validate_pdf_for_mineru(pdf_path)
+    if not validation.ok:
+        _log.error("%s", validation.error or "PDF validation failed")
+        ctx.status = "failed"
+        return StepResult.FAIL
+
+    local_chunk_limit = getattr(ctx.cfg.ingest, "chunk_page_limit", 100)
+    cloud_chunk_size = 0
+    cloud_chunk_reason = ""
+    page_count = -1
+    is_long = False
+    if local_mineru_available:
+        page_count = _get_pdf_page_count(pdf_path)
+        is_long = page_count > local_chunk_limit
         if is_long:
-            result = _convert_long_pdf(pdf_path, mineru_opts, chunk_size=chunk_limit)
+            ui(f"检测到长 PDF（{page_count} 页，超过 {local_chunk_limit} 页限制），正在分片处理...")
+    else:
+        is_long, cloud_chunk_size, cloud_chunk_reason = _plan_cloud_chunking(
+            pdf_path,
+            default_chunk_size=local_chunk_limit,
+        )
+        if is_long:
+            ui(f"检测到云端需分片 PDF（{cloud_chunk_reason}），正在分片处理...")
+
+    # Try local MinerU first, fallback to MinerU cloud CLI
+    if local_mineru_available:
+        if is_long:
+            result = _convert_long_pdf(pdf_path, mineru_opts, chunk_size=local_chunk_limit)
         else:
             result = convert_pdf(pdf_path, mineru_opts)
     else:
-        api_key = ctx.cfg.resolved_mineru_api_key()
-        if not api_key:
-            _log.error("MinerU unreachable and no cloud API key")
-            ctx.status = "failed"
-            return StepResult.FAIL
         from scholaraio.ingest.mineru import convert_pdf_cloud
 
-        _log.debug("local MinerU unreachable, using cloud API")
+        _log.debug("local MinerU unreachable, using MinerU cloud CLI")
         if is_long:
-            result = _convert_long_pdf_cloud(
-                pdf_path,
-                mineru_opts,
-                api_key=api_key,
-                cloud_url=ctx.cfg.ingest.mineru_cloud_url,
-                chunk_size=chunk_limit,
-            )
+            try:
+                result = _convert_long_pdf_cloud(
+                    pdf_path,
+                    mineru_opts,
+                    api_key=cloud_api_key,
+                    cloud_url=ctx.cfg.ingest.mineru_cloud_url,
+                    chunk_size=cloud_chunk_size or local_chunk_limit,
+                )
+            except ImportError as exc:
+                _log.warning("cloud split unavailable, trying fallback parsers: %s", exc)
+                result = ConvertResult(pdf_path=pdf_path, success=False, error=str(exc))
+            except Exception as exc:
+                _log.warning("cloud split failed unexpectedly, trying fallback parsers: %s", exc)
+                result = ConvertResult(pdf_path=pdf_path, success=False, error=str(exc))
         else:
             result = convert_pdf_cloud(
                 pdf_path,
                 mineru_opts,
-                api_key=api_key,
+                api_key=cloud_api_key,
                 cloud_url=ctx.cfg.ingest.mineru_cloud_url,
             )
 
-    if not result.success:
-        _log.error("MinerU failed: %s", result.error)
-        ctx.status = "failed"
-        return StepResult.FAIL
+    if result is None or not result.success:
+        mineru_err = result.error if result is not None else "MinerU unavailable"
+        if is_pdf_validation_error(result):
+            _log.error("%s", mineru_err)
+            ctx.status = "failed"
+            return StepResult.FAIL
+        _log.warning("MinerU failed, trying fallback parsers: %s", mineru_err)
+        ok, parser_name, fallback_err = convert_pdf_with_fallback(
+            pdf_path,
+            md_path,
+            parser_order=fallback_order,
+            auto_detect=fallback_auto_detect,
+        )
+        if not ok:
+            _log.error("fallback parsers failed: %s", fallback_err)
+            ctx.status = "failed"
+            return StepResult.FAIL
+        ui(f"MinerU 不可用，已降级使用 {parser_name} 解析。")
+        ctx.md_path = md_path
+        return StepResult.OK
 
     ctx.md_path = result.md_path or md_path
     return StepResult.OK
@@ -324,7 +423,8 @@ def step_extract(ctx: InboxCtx) -> StepResult:
     extractor = get_extractor(ctx.cfg)
     meta = extractor.extract(ctx.md_path)
     ui(f"Title: {(meta.title or '?')[:80]}")
-    ui(f"Author: {meta.first_author_lastname or '?'} | Year: {meta.year or '?'} | DOI: {meta.doi or 'none'}")
+    doi_or_arxiv = meta.doi or (f"arXiv:{meta.arxiv_id}" if meta.arxiv_id else "none")
+    ui(f"Author: {meta.first_author_lastname or '?'} | Year: {meta.year or '?'} | ID: {doi_or_arxiv}")
     ctx.meta = meta
     return StepResult.OK
 
@@ -406,6 +506,17 @@ def step_dedup(ctx: InboxCtx) -> StepResult:
     if doi and doi.strip().lower() in ("null", "none", "n/a"):
         ctx.meta.doi = ""
         doi = ""
+    arxiv_key = _normalize_arxiv_id(ctx.meta.arxiv_id)
+    if arxiv_key and ctx.existing_arxiv_ids and arxiv_key in ctx.existing_arxiv_ids:
+        existing_json = ctx.existing_arxiv_ids[arxiv_key]
+        _move_to_pending(
+            ctx,
+            issue="duplicate",
+            message="arXiv 预印本与已入库论文重复",
+            extra={"duplicate_of": existing_json.parent.name, "arxiv_id": arxiv_key},
+        )
+        ctx.status = "duplicate"
+        return StepResult.FAIL
     if not doi or not doi.strip():
         # No DOI -> check if patent (by publication number or detection)
         if _detect_patent(ctx):
@@ -444,8 +555,14 @@ def step_dedup(ctx: InboxCtx) -> StepResult:
             ctx.meta.paper_type = "book"
             ui("检测为书籍，无 DOI 直接入库")
             return StepResult.OK
-        # Not thesis/book/patent -> move to pending
-        _log.debug("no DOI and not thesis/book/patent, moving to pending")
+        # No DOI -> check arXiv preprint (has arXiv ID from extraction or API)
+        if ctx.meta.arxiv_id:
+            if not ctx.meta.paper_type:
+                ctx.meta.paper_type = "preprint"
+            ui(f"检测为 arXiv 预印本（{ctx.meta.arxiv_id}），无 DOI 直接入库")
+            return StepResult.OK
+        # Not thesis/book/patent/arXiv -> move to pending
+        _log.debug("no DOI and not thesis/book/patent/arXiv, moving to pending")
         _move_to_pending(ctx)
         ctx.status = "needs_review"
         return StepResult.FAIL
@@ -555,6 +672,9 @@ def step_ingest(ctx: InboxCtx) -> StepResult:
     if ctx.meta.publication_number and ctx.meta.publication_number.strip():
         if ctx.existing_pub_nums is not None:
             ctx.existing_pub_nums[ctx.meta.publication_number.upper().strip()] = new_json
+    arxiv_key = _normalize_arxiv_id(ctx.meta.arxiv_id)
+    if arxiv_key and ctx.existing_arxiv_ids is not None:
+        ctx.existing_arxiv_ids[arxiv_key] = new_json
 
     # Update papers_registry immediately so UUID lookup works before rebuild
     _update_registry(ctx.cfg, ctx.meta, paper_d.name)
@@ -657,9 +777,9 @@ def step_translate(json_path: Path, cfg: Config, opts: dict) -> StepResult:
         opts: 运行选项。
 
     Returns:
-        ``StepResult.OK`` 成功, ``StepResult.SKIP`` 跳过。
+        ``StepResult.OK`` 成功, ``StepResult.FAIL`` 失败, ``StepResult.SKIP`` 跳过。
     """
-    from scholaraio.translate import translate_paper
+    from scholaraio.translate import SKIP_ALL_CHUNKS_FAILED, translate_paper
 
     paper_d = json_path.parent
     md_path = paper_d / "paper.md"
@@ -681,6 +801,12 @@ def step_translate(json_path: Path, cfg: Config, opts: dict) -> StepResult:
         return StepResult.SKIP
     force = opts.get("force", False)
     tr = translate_paper(paper_d, cfg, target_lang=target_lang, force=force)
+    if tr.partial:
+        ui(f"  翻译中断: 已完成 {tr.completed_chunks}/{tr.total_chunks} 块，可稍后继续续翻")
+        return StepResult.FAIL
+    if tr.skip_reason == SKIP_ALL_CHUNKS_FAILED:
+        ui("  翻译失败: 全部分块翻译失败")
+        return StepResult.FAIL
     if not tr.ok:
         return StepResult.SKIP
     ui(f"  已翻译: {tr.path.name}")  # type: ignore[union-attr]
@@ -841,7 +967,9 @@ def _process_inbox(
     *,
     is_thesis: bool = False,
     is_patent: bool = False,
+    is_proceedings: bool = False,
     existing_pub_nums: dict[str, Path] | None = None,
+    existing_arxiv_ids: dict[str, Path] | None = None,
 ) -> None:
     """处理单个 inbox 目录中的所有文件。
 
@@ -858,11 +986,12 @@ def _process_inbox(
         is_thesis: 是否为 thesis inbox（跳过 DOI 去重，标记 paper_type）。
         is_patent: 是否为 patent inbox（跳过 DOI 去重，用公开号去重）。
         existing_pub_nums: 已入库专利公开号映射（用于去重）。
+        existing_arxiv_ids: 已入库 arXiv ID 映射（用于预印本去重）。
     """
     if not inbox_dir.exists():
         return
 
-    label_prefix = "[thesis] " if is_thesis else ""
+    label_prefix = "[thesis] " if is_thesis else ("[proceedings] " if is_proceedings else "")
 
     entries: dict[str, dict[str, Path | None]] = {}
     for pdf in sorted(inbox_dir.glob("*.pdf")):
@@ -890,13 +1019,17 @@ def _process_inbox(
     use_cloud_batch = False
     if needs_mineru and not dry_run:
         from scholaraio.ingest.mineru import check_server
+        from scholaraio.ingest.pdf_fallback import prefers_fallback_parser
 
-        if not check_server(cfg.ingest.mineru_endpoint):
+        preferred_parser = getattr(cfg.ingest, "pdf_preferred_parser", "mineru")
+        if prefers_fallback_parser(preferred_parser):
+            _log.debug("preferred parser %s bypasses MinerU cloud batch preflight", preferred_parser)
+        elif not check_server(cfg.ingest.mineru_endpoint):
             if cfg.resolved_mineru_api_key():
-                _log.debug("local MinerU unreachable, will use cloud API")
+                _log.debug("local MinerU unreachable, will use MinerU cloud CLI")
                 use_cloud_batch = True
             else:
-                _log.error("MinerU unreachable (local: %s, no cloud API key)", cfg.ingest.mineru_endpoint)
+                _log.error("MinerU unreachable (local: %s, no MinerU token)", cfg.ingest.mineru_endpoint)
                 sys.exit(1)
 
     extra_info = []
@@ -911,26 +1044,43 @@ def _process_inbox(
     # ---- Batch MinerU preflight (cloud only) ----
     mineru_time = 0.0
     long_pdf_stems: set[str] = set()  # stems of long PDFs excluded from batch
+    batch_retry_stems: set[str] = set()
+    batch_completed_stems: set[str] = set()
     if use_cloud_batch and needs_mineru and not dry_run:
-        from scholaraio.ingest.mineru import _get_pdf_page_count
+        from scholaraio.ingest.mineru import _plan_cloud_chunking
 
-        chunk_limit = getattr(cfg.ingest, "chunk_page_limit", 100)
+        normalize_batch_assets = any(step_name != "mineru" for step_name in inbox_steps)
+        default_chunk_size = getattr(cfg.ingest, "chunk_page_limit", 100)
         pdfs_to_convert = []
         for e in entries.values():
             pdf = e["pdf"]
             if not pdf or (inbox_dir / (pdf.stem + ".md")).exists():
                 continue
-            # Exclude long PDFs from batch — they need chunk-based handling
-            pc = _get_pdf_page_count(pdf)
-            if pc > chunk_limit:
+            should_chunk, _chunk_size, reason = _plan_cloud_chunking(
+                pdf,
+                default_chunk_size=default_chunk_size,
+            )
+            if should_chunk:
                 long_pdf_stems.add(pdf.stem)
-                _log.info("long PDF excluded from batch (%d pages): %s", pc, pdf.name)
+                _log.info("cloud-split PDF excluded from batch (%s): %s", reason, pdf.name)
                 continue
             pdfs_to_convert.append(pdf)
         if pdfs_to_convert:
-            from scholaraio.ingest.mineru import ConvertOptions, convert_pdfs_cloud_batch
+            from scholaraio.ingest.mineru import ConvertOptions, convert_pdfs_cloud_batch, is_pdf_validation_error
 
-            mineru_opts = ConvertOptions(output_dir=inbox_dir)
+            mineru_opts = ConvertOptions(
+                output_dir=inbox_dir,
+                backend=cfg.ingest.mineru_backend_local,
+                cloud_model_version=cfg.ingest.mineru_model_version_cloud,
+                lang=cfg.ingest.mineru_lang,
+                parse_method=cfg.ingest.mineru_parse_method,
+                formula_enable=cfg.ingest.mineru_enable_formula,
+                table_enable=cfg.ingest.mineru_enable_table,
+                upload_workers=cfg.ingest.mineru_upload_workers,
+                upload_retries=cfg.ingest.mineru_upload_retries,
+                download_retries=cfg.ingest.mineru_download_retries,
+                poll_timeout=cfg.ingest.mineru_poll_timeout,
+            )
             t_batch_start = time.time()
             batch_results = convert_pdfs_cloud_batch(
                 pdfs_to_convert,
@@ -940,29 +1090,57 @@ def _process_inbox(
                 batch_size=cfg.ingest.mineru_batch_size,
             )
             mineru_time = time.time() - t_batch_start
+            expected_batch_stems = {pdf.stem for pdf in pdfs_to_convert}
             # Move namespaced assets back to per-stem structure
             for br in batch_results:
                 did = br.pdf_path.stem
-                # Rename <data_id>_images → images dir for this stem
-                namespaced_images = inbox_dir / f"{did}_images"
-                if namespaced_images.is_dir():
-                    target = inbox_dir / f"{did}_mineru_images"
-                    namespaced_images.rename(target)
+                asset_stem = _safe_pdf_artifact_stem_from_stem(did)
+                target = inbox_dir / f"{asset_stem}_mineru_images"
+                if normalize_batch_assets:
+                    # Normalize cloud assets into the legacy inbox layout so later
+                    # extract/dedup/ingest steps can reuse the existing asset mover.
+                    for candidate_stem in _asset_stem_candidates(did, ""):
+                        namespaced_images = inbox_dir / f"{candidate_stem}_images"
+                        if _path_is_dir(namespaced_images):
+                            if target.exists():
+                                shutil.rmtree(target)
+                            namespaced_images.rename(target)
+                            break
+                    nested_images = br.md_path.parent / "images" if br.md_path else None
+                    if nested_images and _path_is_dir(nested_images) and nested_images != target:
+                        if target.exists():
+                            shutil.rmtree(target)
+                        shutil.move(str(nested_images), str(target))
                 if not br.success:
+                    batch_retry_stems.add(did)
                     _log.error("MinerU batch failed for %s: %s", br.pdf_path.name, br.error)
-            # Update entries with generated .md paths
-            for stem, e in entries.items():
-                md_check = inbox_dir / (stem + ".md")
-                if md_check.exists() and e["md"] is None:
-                    e["md"] = md_check
+                    if is_pdf_validation_error(br):
+                        ui(f"  {br.pdf_path.name}: PDF 校验失败，后续不会降级解析")
+                    else:
+                        ui(f"  {br.pdf_path.name}: MinerU 批量预处理失败，后续将按单文件解析流重试")
+                    continue
+                entry = entries.get(did)
+                if entry is not None and entry["md"] is None and br.md_path and br.md_path.exists():
+                    entry["md"] = (
+                        br.md_path
+                        if normalize_batch_assets
+                        else _flatten_cloud_batch_output(inbox_dir, did, br.md_path)
+                    )
+                    batch_completed_stems.add(did)
+                else:
+                    batch_retry_stems.add(did)
+                    ui(f"  {br.pdf_path.name}: MinerU 批量预处理未生成有效 Markdown，后续将按单文件解析流重试")
+
+            missing_batch_stems = expected_batch_stems - batch_completed_stems - batch_retry_stems
+            if missing_batch_stems:
+                batch_retry_stems.update(missing_batch_stems)
+                for stem in sorted(missing_batch_stems):
+                    _log.error("MinerU batch missing result for %s.pdf", stem)
+                    ui(f"  {stem}.pdf: MinerU 批量预处理结果缺失，后续将按单文件解析流重试")
 
     # ---- Per-file pipeline (remaining steps, or all steps if local MinerU) ----
-    # If batch MinerU was used, skip mineru step per-file (md already exists)
-    # BUT keep mineru for long PDFs that were excluded from batch
     per_file_steps = inbox_steps
     batch_skip_mineru = use_cloud_batch and "mineru" in per_file_steps
-    if batch_skip_mineru and not long_pdf_stems:
-        per_file_steps = [s for s in per_file_steps if s != "mineru"]
 
     has_api = "dedup" in per_file_steps and not dry_run and not opts.get("no_api") and not is_thesis
     api_delay = 2.0 if has_api else 0
@@ -989,12 +1167,11 @@ def _process_inbox(
             file_type = "MD"
         ui(f"\n{label_prefix}[{idx + 1}/{len(sorted_entries)}] {file_type}: {file_label}")
 
-        # For long PDFs excluded from batch, keep mineru step
         file_steps = per_file_steps
-        if batch_skip_mineru and long_pdf_stems and stem in long_pdf_stems:
-            file_steps = inbox_steps  # full steps including mineru
-        elif batch_skip_mineru and long_pdf_stems and stem not in long_pdf_stems:
-            file_steps = [s for s in per_file_steps if s != "mineru"]
+        if batch_skip_mineru:
+            needs_single_file_mineru = stem in long_pdf_stems or stem in batch_retry_stems
+            if not needs_single_file_mineru and paths["md"] is not None:
+                file_steps = [s for s in per_file_steps if s != "mineru"]
 
         # Inject office_path for office-only entries (no PDF) so downstream steps can clean up the source file
         file_opts = dict(opts)
@@ -1013,12 +1190,21 @@ def _process_inbox(
             is_thesis=is_thesis,
             is_patent=is_patent,
             existing_pub_nums=existing_pub_nums,
+            existing_arxiv_ids=existing_arxiv_ids,
         )
+        if is_proceedings and ctx.md_path and _ingest_proceedings_ctx(ctx, force=True):
+            final_status = ctx.status if ctx.status != "pending" else "skipped"
+            stats[final_status] += 1
+            continue
         for step_name in file_steps:
             with timer(f"pipeline.inbox.{step_name}", "step") as t:
                 result = STEPS[step_name].fn(ctx)
             step_times[step_name] = step_times.get(step_name, 0) + t.elapsed
             _log.debug("%s: %.1fs", step_name, t.elapsed)
+            if is_proceedings and step_name == "mineru" and result == StepResult.OK and ctx.md_path:
+                if _ingest_proceedings_ctx(ctx, force=True):
+                    result = StepResult.FAIL
+                    break
             if result != StepResult.OK:
                 break
 
@@ -1039,6 +1225,10 @@ def _process_inbox(
         if stray_dir.is_dir():
             shutil.rmtree(stray_dir)
             _log.debug("stray cleanup dir: %s", stray_dir.name)
+    for stray_dir in list(inbox_dir.glob("[0-9][0-9][0-9][0-9]_*")):
+        if stray_dir.is_dir() and not any(stray_dir.iterdir()):
+            stray_dir.rmdir()
+            _log.debug("stray cleanup empty batch dir: %s", stray_dir.name)
 
     ui(
         f"\n{label_prefix}inbox done: {stats['ingested']} ingested | {stats['duplicate']} duplicate | {stats['needs_review']} review | {stats['failed']} failed | {stats['skipped']} skipped"
@@ -1101,6 +1291,7 @@ def run_pipeline(
     inbox_dir: Path = opts.get("inbox_dir", cfg._root / "data/inbox")
     papers_dir: Path = opts.get("papers_dir", cfg.papers_dir)
     pending_dir: Path = cfg._root / "data" / "pending"
+    include_aux_inboxes: bool = opts.get("include_aux_inboxes", True)
 
     inbox_steps = [n for n in step_names if STEPS[n].scope == "inbox"]
     papers_steps = [n for n in step_names if STEPS[n].scope == "papers"]
@@ -1111,7 +1302,7 @@ def run_pipeline(
 
     # ---- Inbox scope ----
     if inbox_steps:
-        existing_dois, existing_pub_nums = _collect_existing_ids(papers_dir)
+        existing_dois, existing_pub_nums, existing_arxiv_ids = _collect_existing_ids(papers_dir)
 
         # Process regular inbox
         _result = _process_inbox(
@@ -1126,11 +1317,12 @@ def run_pipeline(
             ingested_jsons,
             is_thesis=False,
             existing_pub_nums=existing_pub_nums,
+            existing_arxiv_ids=existing_arxiv_ids,
         )
 
         # Process thesis inbox (data/inbox-thesis/)
         thesis_inbox = cfg._root / "data" / "inbox-thesis"
-        if thesis_inbox.exists():
+        if include_aux_inboxes and thesis_inbox.exists():
             _process_inbox(
                 thesis_inbox,
                 papers_dir,
@@ -1143,11 +1335,12 @@ def run_pipeline(
                 ingested_jsons,
                 is_thesis=True,
                 existing_pub_nums=existing_pub_nums,
+                existing_arxiv_ids=existing_arxiv_ids,
             )
 
         # Process patent inbox (data/inbox-patent/)
         patent_inbox = cfg._root / "data" / "inbox-patent"
-        if patent_inbox.exists():
+        if include_aux_inboxes and patent_inbox.exists():
             _process_inbox(
                 patent_inbox,
                 papers_dir,
@@ -1160,11 +1353,12 @@ def run_pipeline(
                 ingested_jsons,
                 is_patent=True,
                 existing_pub_nums=existing_pub_nums,
+                existing_arxiv_ids=existing_arxiv_ids,
             )
 
         # Process document inbox (data/inbox-doc/)
         doc_inbox = cfg._root / "data" / "inbox-doc"
-        if doc_inbox.exists():
+        if include_aux_inboxes and doc_inbox.exists():
             # Documents use extract_doc + ingest (skip dedup/API queries)
             doc_steps = [s for s in _DOC_INBOX_STEPS if s in STEPS]
             _process_inbox(
@@ -1179,6 +1373,24 @@ def run_pipeline(
                 ingested_jsons,
                 is_thesis=False,
                 existing_pub_nums=existing_pub_nums,
+                existing_arxiv_ids=existing_arxiv_ids,
+            )
+
+        proceedings_inbox = cfg._root / "data" / "inbox-proceedings"
+        if include_aux_inboxes and proceedings_inbox.exists():
+            _process_inbox(
+                proceedings_inbox,
+                papers_dir,
+                pending_dir,
+                existing_dois,
+                inbox_steps,
+                cfg,
+                opts,
+                dry_run,
+                ingested_jsons,
+                is_proceedings=True,
+                existing_pub_nums=existing_pub_nums,
+                existing_arxiv_ids=existing_arxiv_ids,
             )
 
     # ---- Papers scope ----
@@ -1316,7 +1528,7 @@ def import_external(
     """
     papers_dir = cfg.papers_dir
     pending_dir = cfg._root / "data" / "pending"
-    existing_dois, existing_pub_nums = _collect_existing_ids(papers_dir)
+    existing_dois, existing_pub_nums, existing_arxiv_ids = _collect_existing_ids(papers_dir)
 
     opts: dict[str, Any] = {"dry_run": dry_run, "no_api": no_api}
     stats: dict[str, int] = {"ingested": 0, "duplicate": 0, "needs_review": 0, "failed": 0, "skipped": 0}
@@ -1340,6 +1552,7 @@ def import_external(
             papers_dir=papers_dir,
             existing_dois=existing_dois,
             existing_pub_nums=existing_pub_nums,
+            existing_arxiv_ids=existing_arxiv_ids,
             cfg=cfg,
             opts=opts,
             pending_dir=pending_dir,
@@ -1390,6 +1603,80 @@ def import_external(
 # ============================================================================
 
 
+def _move_batch_images(paper_md: Path, pdir: Path, stem: str, md_src: Path | None, tmp_dir: Path) -> None:
+    """Move images produced by cloud batch conversion into ``pdir/images``."""
+    image_sources: list[Path] = []
+
+    for candidate_stem in _asset_stem_candidates(stem, ""):
+        legacy_images_src = tmp_dir / f"{candidate_stem}_images"
+        if _path_is_dir(legacy_images_src):
+            image_sources.append(legacy_images_src)
+
+    if md_src is not None:
+        candidates = [md_src.parent / "images"]
+        candidates.extend(
+            md_src.parent / f"{candidate_stem}_images" for candidate_stem in _asset_stem_candidates(stem, "")
+        )
+        for candidate in candidates:
+            if _path_is_dir(candidate) and candidate not in image_sources:
+                image_sources.append(candidate)
+
+    if not image_sources:
+        return
+
+    images_dst = pdir / "images"
+    if images_dst.exists():
+        shutil.rmtree(str(images_dst))
+    images_dst.mkdir(parents=True, exist_ok=True)
+
+    for images_src in image_sources:
+        for child in images_src.iterdir():
+            dst_child = images_dst / child.name
+            if dst_child.exists():
+                if dst_child.is_dir():
+                    shutil.rmtree(str(dst_child))
+                else:
+                    dst_child.unlink()
+            shutil.move(str(child), str(dst_child))
+        images_src.rmdir()
+
+    if paper_md.exists():
+        md_text = paper_md.read_text(encoding="utf-8")
+        fixed = md_text
+        for candidate_stem in _asset_stem_candidates(stem, ""):
+            fixed = fixed.replace(f"{candidate_stem}_images/", "images/")
+        if fixed != md_text:
+            paper_md.write_text(fixed, encoding="utf-8")
+
+
+def _flatten_cloud_batch_output(inbox_dir: Path, stem: str, md_src: Path) -> Path:
+    """Move isolated cloud batch output back into inbox root for mineru-only flows."""
+    flat_md = inbox_dir / f"{stem}.md"
+    if md_src != flat_md:
+        if flat_md.exists():
+            flat_md.unlink()
+        shutil.move(str(md_src), str(flat_md))
+
+    images_src = md_src.parent / "images"
+    if images_src.is_dir():
+        images_dst = inbox_dir / "images"
+        images_dst.mkdir(parents=True, exist_ok=True)
+        for child in images_src.iterdir():
+            dst_child = images_dst / child.name
+            if dst_child.exists():
+                if dst_child.is_dir():
+                    shutil.rmtree(str(dst_child))
+                else:
+                    dst_child.unlink()
+            shutil.move(str(child), str(dst_child))
+        images_src.rmdir()
+
+    md_src_parent = md_src.parent
+    if md_src_parent != inbox_dir and md_src_parent.is_dir() and not any(md_src_parent.iterdir()):
+        md_src_parent.rmdir()
+    return flat_md
+
+
 def batch_convert_pdfs(
     cfg: Config,
     *,
@@ -1425,21 +1712,54 @@ def batch_convert_pdfs(
         ui("没有需要转换的 PDF")
         return stats
 
-    from scholaraio.ingest.mineru import ConvertOptions, check_server
+    from scholaraio.ingest.mineru import ConvertOptions, check_server, is_pdf_validation_error
+    from scholaraio.ingest.pdf_fallback import (
+        convert_pdf_with_fallback,
+        preferred_parser_order,
+        prefers_fallback_parser,
+    )
 
     use_local = check_server(cfg.ingest.mineru_endpoint)
     api_key = None
+    fallback_auto_detect = getattr(cfg.ingest, "pdf_fallback_auto_detect", True)
+    fallback_order = preferred_parser_order(
+        getattr(cfg.ingest, "pdf_preferred_parser", "mineru"),
+        getattr(cfg.ingest, "pdf_fallback_order", None),
+        auto_detect=fallback_auto_detect,
+    )
+    prefer_fallback = prefers_fallback_parser(getattr(cfg.ingest, "pdf_preferred_parser", "mineru"))
     if not use_local:
         api_key = cfg.resolved_mineru_api_key()
         if not api_key:
-            ui("错误：MinerU 不可达且无云 API key，无法批量转换")
-            return stats
+            ui("MinerU 不可达且无 MinerU token，改用 fallback 解析器继续批量转换")
 
     ui(f"\n开始批量转换 {len(to_convert)} 个 PDF...")
 
     converted_dirs: list[Path] = []
 
-    if use_local:
+    def _run_fallback(pdir: Path, pdf_path: Path) -> bool:
+        ok, parser_name, err = convert_pdf_with_fallback(
+            pdf_path,
+            pdir / "paper.md",
+            parser_order=fallback_order,
+            auto_detect=fallback_auto_detect,
+        )
+        if not ok:
+            ui(f"  {pdir.name}: fallback 失败: {err}")
+            stats["failed"] += 1
+            return False
+        if pdf_path.exists() and pdf_path.name != "paper.pdf":
+            pdf_path.unlink()
+        ui(f"  {pdir.name}: 已降级使用 {parser_name}")
+        converted_dirs.append(pdir)
+        stats["converted"] += 1
+        return True
+
+    if prefer_fallback:
+        for idx, (pdir, pdf_path) in enumerate(to_convert):
+            ui(f"[{idx + 1}/{len(to_convert)}] {pdir.name}")
+            _run_fallback(pdir, pdf_path)
+    elif use_local:
         # Local MinerU: sequential single-file conversion
         from scholaraio.ingest.mineru import convert_pdf
 
@@ -1448,87 +1768,158 @@ def batch_convert_pdfs(
             mineru_opts = ConvertOptions(
                 api_url=cfg.ingest.mineru_endpoint,
                 output_dir=pdir,
+                backend=cfg.ingest.mineru_backend_local,
+                cloud_model_version=cfg.ingest.mineru_model_version_cloud,
+                lang=cfg.ingest.mineru_lang,
+                parse_method=cfg.ingest.mineru_parse_method,
+                formula_enable=cfg.ingest.mineru_enable_formula,
+                table_enable=cfg.ingest.mineru_enable_table,
             )
             result = convert_pdf(pdf_path, mineru_opts)
             if not result.success:
-                ui(f"  转换失败: {result.error}")
-                stats["failed"] += 1
+                ui(f"  MinerU 失败: {result.error}")
+                if is_pdf_validation_error(result):
+                    stats["failed"] += 1
+                    continue
+                _run_fallback(pdir, pdf_path)
                 continue
 
             _postprocess_convert(pdir, pdf_path, result)
             converted_dirs.append(pdir)
             stats["converted"] += 1
+    elif not api_key:
+        for idx, (pdir, pdf_path) in enumerate(to_convert):
+            ui(f"[{idx + 1}/{len(to_convert)}] {pdir.name}")
+            _run_fallback(pdir, pdf_path)
     else:
         # Cloud MinerU: true batch conversion via convert_pdfs_cloud_batch
         import tempfile
 
-        from scholaraio.ingest.mineru import ConvertOptions, convert_pdfs_cloud_batch
+        from scholaraio.ingest.mineru import (
+            ConvertOptions,
+            _convert_long_pdf_cloud,
+            _plan_cloud_chunking,
+            convert_pdfs_cloud_batch,
+        )
 
-        # Collect PDF paths; detect stem collisions (batch API uses stem as data_id)
+        # Collect PDF paths for cloud batch conversion.
         pdf_paths: list[Path] = []
-        dir_map: dict[str, Path] = {}
+        dir_map: dict[Path, Path] = {}
+        chunked_items: list[tuple[Path, Path, int, str]] = []
+        default_chunk_size = getattr(cfg.ingest, "chunk_page_limit", 100)
         for pdir, pdf in to_convert:
-            if pdf.stem in dir_map:
-                _log.warning(
-                    "PDF stem collision: %s in %s and %s, skipping latter", pdf.stem, dir_map[pdf.stem].name, pdir.name
-                )
-                stats["skipped"] += 1
+            should_chunk, chunk_size, reason = _plan_cloud_chunking(
+                pdf,
+                default_chunk_size=default_chunk_size,
+            )
+            if should_chunk:
+                chunked_items.append((pdir, pdf, chunk_size, reason))
                 continue
-            dir_map[pdf.stem] = pdir
+            dir_map[pdf] = pdir
             pdf_paths.append(pdf)
 
-        with tempfile.TemporaryDirectory(prefix="scholaraio_batch_") as tmp:
-            tmp_dir = Path(tmp)
-            batch_opts = ConvertOptions(output_dir=tmp_dir)
+        if pdf_paths:
+            with tempfile.TemporaryDirectory(prefix="scholaraio_batch_") as tmp:
+                tmp_dir = Path(tmp)
+                batch_opts = ConvertOptions(
+                    output_dir=tmp_dir,
+                    backend=cfg.ingest.mineru_backend_local,
+                    cloud_model_version=cfg.ingest.mineru_model_version_cloud,
+                    lang=cfg.ingest.mineru_lang,
+                    parse_method=cfg.ingest.mineru_parse_method,
+                    formula_enable=cfg.ingest.mineru_enable_formula,
+                    table_enable=cfg.ingest.mineru_enable_table,
+                    upload_workers=cfg.ingest.mineru_upload_workers,
+                    upload_retries=cfg.ingest.mineru_upload_retries,
+                    download_retries=cfg.ingest.mineru_download_retries,
+                    poll_timeout=cfg.ingest.mineru_poll_timeout,
+                )
 
-            batch_results = convert_pdfs_cloud_batch(
-                pdf_paths,
-                batch_opts,
-                api_key=api_key,
-                cloud_url=cfg.ingest.mineru_cloud_url,
-                batch_size=cfg.ingest.mineru_batch_size,
+                batch_results = convert_pdfs_cloud_batch(
+                    pdf_paths,
+                    batch_opts,
+                    api_key=api_key,
+                    cloud_url=cfg.ingest.mineru_cloud_url,
+                    batch_size=cfg.ingest.mineru_batch_size,
+                )
+
+                for br in batch_results:
+                    pdir = dir_map.get(br.pdf_path)
+                    if pdir is None:
+                        _log.error("batch result pdf %s not in dir_map", br.pdf_path)
+                        stats["failed"] += 1
+                        continue
+
+                    if not br.success:
+                        ui(f"  {pdir.name}: MinerU 失败: {br.error}")
+                        if is_pdf_validation_error(br):
+                            stats["failed"] += 1
+                            continue
+                        _run_fallback(pdir, br.pdf_path)
+                        continue
+
+                    md_src = br.md_path if br.md_path and br.md_path.exists() else None
+                    if md_src is None:
+                        ui(f"  {pdir.name}: MinerU 未生成有效的 markdown，转为本地回退")
+                        _run_fallback(pdir, br.pdf_path)
+                        continue
+
+                    # Move .md to paper_dir/paper.md
+                    paper_md = pdir / "paper.md"
+                    shutil.move(str(md_src), str(paper_md))
+                    _move_batch_images(paper_md, pdir, br.pdf_path.stem, md_src, tmp_dir)
+
+                    # Clean up source PDF (keep only markdown)
+                    pdf_path = br.pdf_path
+                    if pdf_path.exists() and pdf_path.parent == pdir and pdf_path.name != "paper.pdf":
+                        pdf_path.unlink()
+
+                    ui(f"  {pdir.name}: OK")
+                    converted_dirs.append(pdir)
+                    stats["converted"] += 1
+
+        for idx, (pdir, pdf_path, chunk_size, reason) in enumerate(chunked_items, start=len(pdf_paths) + 1):
+            ui(f"[{idx}/{len(pdf_paths) + len(chunked_items)}] {pdir.name}")
+            ui(f"  {pdir.name}: 云端分片处理（{reason}，chunk_size={chunk_size}）")
+            mineru_opts = ConvertOptions(
+                output_dir=pdir,
+                backend=cfg.ingest.mineru_backend_local,
+                cloud_model_version=cfg.ingest.mineru_model_version_cloud,
+                lang=cfg.ingest.mineru_lang,
+                parse_method=cfg.ingest.mineru_parse_method,
+                formula_enable=cfg.ingest.mineru_enable_formula,
+                table_enable=cfg.ingest.mineru_enable_table,
+                upload_workers=cfg.ingest.mineru_upload_workers,
+                upload_retries=cfg.ingest.mineru_upload_retries,
+                download_retries=cfg.ingest.mineru_download_retries,
+                poll_timeout=cfg.ingest.mineru_poll_timeout,
             )
-
-            for br in batch_results:
-                stem = br.pdf_path.stem
-                pdir = dir_map.get(stem)
-                if pdir is None:
-                    _log.error("batch result stem %s not in dir_map", stem)
+            try:
+                result = _convert_long_pdf_cloud(
+                    pdf_path,
+                    mineru_opts,
+                    api_key=api_key,
+                    cloud_url=cfg.ingest.mineru_cloud_url,
+                    chunk_size=chunk_size,
+                )
+            except ImportError as exc:
+                ui(f"  {pdir.name}: 云端分片依赖缺失，转为本地回退: {exc}")
+                _run_fallback(pdir, pdf_path)
+                continue
+            except Exception as exc:
+                ui(f"  {pdir.name}: 云端分片失败，转为本地回退: {exc}")
+                _run_fallback(pdir, pdf_path)
+                continue
+            if not result.success:
+                ui(f"  {pdir.name}: MinerU 失败: {result.error}")
+                if is_pdf_validation_error(result):
                     stats["failed"] += 1
                     continue
-
-                if not br.success:
-                    ui(f"  {pdir.name}: 转换失败: {br.error}")
-                    stats["failed"] += 1
-                    continue
-
-                # Move .md to paper_dir/paper.md
-                paper_md = pdir / "paper.md"
-                if br.md_path and br.md_path.exists():
-                    shutil.move(str(br.md_path), str(paper_md))
-
-                # Move namespaced images: tmp/<stem>_images → paper_dir/images
-                images_src = tmp_dir / f"{stem}_images"
-                if images_src.is_dir():
-                    images_dst = pdir / "images"
-                    if images_dst.exists():
-                        shutil.rmtree(str(images_dst))
-                    shutil.move(str(images_src), str(images_dst))
-                    # Fix image paths in markdown (data_id_images/ → images/)
-                    if paper_md.exists():
-                        md_text = paper_md.read_text(encoding="utf-8")
-                        fixed = md_text.replace(f"{stem}_images/", "images/")
-                        if fixed != md_text:
-                            paper_md.write_text(fixed, encoding="utf-8")
-
-                # Clean up source PDF (keep only markdown)
-                pdf_path = br.pdf_path
-                if pdf_path.exists() and pdf_path.parent == pdir and pdf_path.name != "paper.pdf":
-                    pdf_path.unlink()
-
-                ui(f"  {pdir.name}: OK")
-                converted_dirs.append(pdir)
-                stats["converted"] += 1
+                _run_fallback(pdir, pdf_path)
+                continue
+            _postprocess_convert(pdir, pdf_path, result)
+            converted_dirs.append(pdir)
+            stats["converted"] += 1
 
     ui(f"批量转换完成: {stats['converted']} 成功 / {stats['failed']} 失败 / {stats['skipped']} 跳过")
 
@@ -1618,19 +2009,21 @@ def _batch_postprocess(
     step_index(cfg.papers_dir, cfg, {"dry_run": False, "rebuild": False})
 
 
-def _collect_existing_ids(papers_dir: Path) -> tuple[dict[str, Path], dict[str, Path]]:
-    """Collect existing DOIs and patent publication numbers for dedup.
+def _collect_existing_ids(papers_dir: Path) -> tuple[dict[str, Path], dict[str, Path], dict[str, Path]]:
+    """Collect existing DOIs, patent publication numbers, and arXiv IDs for dedup.
 
     Returns:
-        (dois, pub_nums) — DOIs map lowercase key → json_path,
-        pub_nums map uppercase key → json_path.
+        (dois, pub_nums, arxiv_ids) — DOI map lowercase key → json_path,
+        pub_nums map uppercase key → json_path,
+        arxiv_ids map normalized key → json_path.
     """
     from scholaraio.papers import iter_paper_dirs
 
     dois: dict[str, Path] = {}
     pub_nums: dict[str, Path] = {}
+    arxiv_ids: dict[str, Path] = {}
     if not papers_dir.exists():
-        return dois, pub_nums
+        return dois, pub_nums, arxiv_ids
     for pdir in iter_paper_dirs(papers_dir):
         json_path = pdir / "meta.json"
         try:
@@ -1641,15 +2034,34 @@ def _collect_existing_ids(papers_dir: Path) -> tuple[dict[str, Path], dict[str, 
             pub_num = (data.get("ids") or {}).get("patent_publication_number", "")
             if pub_num and pub_num.strip():
                 pub_nums[pub_num.upper().strip()] = json_path
+            arxiv_id = data.get("arxiv_id") or (data.get("ids") or {}).get("arxiv", "")
+            arxiv_key = _normalize_arxiv_id(arxiv_id)
+            if arxiv_key:
+                arxiv_ids[arxiv_key] = json_path
         except Exception as e:
             _log.debug("failed to read %s: %s", json_path.name, e)
-    return dois, pub_nums
+    return dois, pub_nums, arxiv_ids
 
 
 def _collect_existing_dois(papers_dir: Path) -> dict[str, Path]:
     """Backward-compatible wrapper returning only DOIs."""
-    dois, _ = _collect_existing_ids(papers_dir)
+    dois, _, _ = _collect_existing_ids(papers_dir)
     return dois
+
+
+def _normalize_arxiv_id(arxiv_id: str) -> str:
+    """Normalize arXiv IDs for duplicate detection.
+
+    Removes optional ``arXiv:`` prefix, trims whitespace, lowercases, and strips
+    version suffixes such as ``v2`` so multiple versions map to the same record.
+    """
+    key = (arxiv_id or "").strip()
+    if not key:
+        return ""
+    if key.lower().startswith("arxiv:"):
+        key = key.split(":", 1)[1]
+    key = key.strip().lower()
+    return re.sub(r"v\d+$", "", key)
 
 
 def _parse_detect_json(text: str) -> dict:
@@ -1790,6 +2202,31 @@ def _detect_thesis(ctx: InboxCtx) -> bool:
     return False
 
 
+def _ingest_proceedings_ctx(ctx: InboxCtx, *, force: bool) -> bool:
+    """Route a markdown entry into the proceedings library."""
+    from scholaraio.ingest.proceedings import ingest_proceedings_markdown
+
+    if not ctx.md_path or not ctx.md_path.exists():
+        return False
+
+    dry_run = bool(ctx.opts.get("dry_run", False))
+    proceedings_root = ctx.cfg._root / "data" / "proceedings"
+    source_name = ctx.pdf_path.name if ctx.pdf_path else ctx.md_path.name
+    if dry_run:
+        ctx.status = "skipped"
+        ui(f"检测为论文集；dry-run 模式下跳过写入 {proceedings_root}。")
+        ui("预览模式不会生成 proceeding.md 和 split_candidates.json。")
+        ui("退出 dry-run 后重新执行，可生成待审阅的论文集拆分文件。")
+        return True
+
+    ingest_proceedings_markdown(proceedings_root, ctx.md_path, source_name=source_name)
+    _cleanup_inbox(ctx.pdf_path, ctx.md_path, dry_run=dry_run)
+    ctx.status = "ingested"
+    ui("检测为论文集，已生成 proceeding.md 和 split_candidates.json。")
+    ui("等待 agent 审阅 split_candidates.json 并生成 split_plan.json，然后再执行后续拆分入库。")
+    return True
+
+
 def _detect_book(ctx: InboxCtx) -> bool:
     """LLM 判断无 DOI 论文是否为书籍/专著。
 
@@ -1875,37 +2312,80 @@ def _find_assets(inbox_dir: Path, asset_prefix: str, md_stem: str) -> tuple[Path
         (images_dir, json_files, origin_pdfs) — images_dir may be None.
     """
     images_dir = None
-    for candidate in [
-        inbox_dir / f"{asset_prefix}_mineru_images",
-        inbox_dir / f"{md_stem}_mineru_images",
-        inbox_dir / "images",
-    ]:
-        if candidate.is_dir():
+    for candidate_stem in _asset_stem_candidates(asset_prefix, md_stem):
+        candidate = inbox_dir / f"{candidate_stem}_mineru_images"
+        if _path_is_dir(candidate):
             images_dir = candidate
             break
+    if images_dir is None and _path_is_dir(inbox_dir / "images"):
+        images_dir = inbox_dir / "images"
+
     json_files: list[Path] = []
     origin_pdfs: list[Path] = []
-    for prefix in dict.fromkeys([asset_prefix, md_stem]):
+    for prefix in _asset_stem_candidates(asset_prefix, md_stem):
         if not prefix:
             continue
-        json_files.extend(inbox_dir.glob(f"{prefix}_*.json"))
-        origin_pdfs.extend(inbox_dir.glob(f"{prefix}_*_origin.pdf"))
+        json_files.extend(_safe_glob(inbox_dir, f"{prefix}_*.json"))
+        origin_pdfs.extend(_safe_glob(inbox_dir, f"{prefix}_*_origin.pdf"))
     return images_dir, json_files, origin_pdfs
+
+
+def _asset_stem_candidates(asset_prefix: str, md_stem: str) -> list[str]:
+    """Return safe-first legacy stem candidates for MinerU transient assets."""
+    candidates: list[str] = []
+
+    def add(stem: str) -> None:
+        if stem and stem not in candidates:
+            candidates.append(stem)
+
+    for stem in (asset_prefix, md_stem):
+        if not stem:
+            continue
+        add(_safe_pdf_artifact_stem_from_stem(stem))
+        add(stem)
+    return candidates
+
+
+def _safe_pdf_artifact_stem_from_stem(stem: str) -> str:
+    from scholaraio.ingest.mineru import _safe_pdf_artifact_stem
+
+    return _safe_pdf_artifact_stem(Path(f"{stem}.pdf"))
+
+
+def _path_is_dir(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
+
+
+def _safe_glob(parent: Path, pattern: str) -> list[Path]:
+    try:
+        return list(parent.glob(pattern))
+    except OSError:
+        return []
 
 
 def _move_assets(inbox_dir: Path, dest_dir: Path, asset_prefix: str, md_stem: str) -> None:
     """Move MinerU assets (images, layout.json, etc.) from inbox to dest."""
     images_dir, json_files, origin_pdfs = _find_assets(inbox_dir, asset_prefix, md_stem)
+    candidate_stems = _asset_stem_candidates(asset_prefix, md_stem)
     if images_dir:
         shutil.move(str(images_dir), str(dest_dir / "images"))
     for f in json_files:
-        prefix = asset_prefix if f.name.startswith(asset_prefix) else md_stem
-        dest_name = f.name.replace(f"{prefix}_", "", 1)
+        dest_name = _strip_artifact_prefix(f.name, candidate_stems)
         shutil.move(str(f), str(dest_dir / dest_name))
     for f in origin_pdfs:
-        prefix = asset_prefix if f.name.startswith(asset_prefix) else md_stem
-        dest_name = f.name.replace(f"{prefix}_", "", 1)
+        dest_name = _strip_artifact_prefix(f.name, candidate_stems)
         shutil.move(str(f), str(dest_dir / dest_name))
+
+
+def _strip_artifact_prefix(name: str, candidate_stems: list[str]) -> str:
+    for stem in candidate_stems:
+        marker = f"{stem}_"
+        if stem and name.startswith(marker):
+            return name.removeprefix(marker)
+    return name
 
 
 def _move_to_pending(

@@ -1,1 +1,1 @@
-"""Data source adapters (local files, Paperlib, etc.)"""
+"""External source adapters (arXiv, EndNote, Zotero, etc.)."""
