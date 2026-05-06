@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import shutil
 import subprocess
@@ -350,6 +351,86 @@ def test_convert_pdf_saves_content_list_with_safe_name_for_long_filename(tmp_pat
     assert result.success is True
     assert (tmp_path / f"{safe_stem}_content_list.json").exists()
     assert f"{long_stem}_content_list.json" not in {path.name for path in tmp_path.iterdir()}
+
+
+def test_convert_pdf_requests_and_saves_returned_images(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    image_bytes = b"fake-png"
+    captured: dict[str, object] = {}
+
+    _allow_pdf_validation(monkeypatch)
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {
+                "results": {
+                    pdf_path.stem: {
+                        "md_content": "![fig](images/fig.png)\n",
+                        "images": {"fig.png": "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")},
+                    }
+                }
+            }
+
+    def fake_post(_url, *, files, timeout):
+        captured["return_images"] = files["return_images"][1]
+        return FakeResponse()
+
+    monkeypatch.setattr("scholaraio.providers.mineru.requests.post", fake_post)
+
+    result = convert_pdf(pdf_path, ConvertOptions(output_dir=tmp_path))
+
+    assert result.success is True
+    assert captured["return_images"] == "true"
+    assert (tmp_path / "paper.md").read_text(encoding="utf-8") == "![fig](paper_images/fig.png)\n"
+    assert (tmp_path / "paper_images" / "fig.png").read_bytes() == image_bytes
+
+
+def test_convert_pdf_namespaces_returned_images_by_pdf_stem(tmp_path, monkeypatch):
+    pdf_paths = [tmp_path / "first.pdf", tmp_path / "second.pdf"]
+    for pdf_path in pdf_paths:
+        pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    _allow_pdf_validation(monkeypatch)
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def __init__(self, image_bytes: bytes):
+            self.image_bytes = image_bytes
+
+        def json(self):
+            return {
+                "results": {
+                    "paper": {
+                        "md_content": "![fig](images/image_1.png)\n",
+                        "images": {
+                            "image_1.png": (
+                                "data:image/png;base64," + base64.b64encode(self.image_bytes).decode("ascii")
+                            )
+                        },
+                    }
+                }
+            }
+
+    def fake_post(_url, *, files, timeout):
+        pdf_name = files["files"][0]
+        return FakeResponse(f"{Path(pdf_name).stem}-image".encode())
+
+    monkeypatch.setattr("scholaraio.providers.mineru.requests.post", fake_post)
+
+    for pdf_path in pdf_paths:
+        result = convert_pdf(pdf_path, ConvertOptions(output_dir=tmp_path))
+        assert result.success is True
+
+    assert (tmp_path / "first.md").read_text(encoding="utf-8") == "![fig](first_images/image_1.png)\n"
+    assert (tmp_path / "second.md").read_text(encoding="utf-8") == "![fig](second_images/image_1.png)\n"
+    assert (tmp_path / "first_images" / "image_1.png").read_bytes() == b"first-image"
+    assert (tmp_path / "second_images" / "image_1.png").read_bytes() == b"second-image"
 
 
 def test_convert_pdf_cloud_invokes_mineru_open_api_extract_with_token_and_flags(tmp_path, monkeypatch):
