@@ -1,10 +1,6 @@
 ---
 name: setup
-description: Initialize and diagnose the ScholarAIO environment. Run interactive setup wizard (bilingual EN/ZH) to install dependencies, create config files, and configure API keys. Run status check to see what's installed and what's missing. Use when the user wants to set up, install, configure, or troubleshoot ScholarAIO.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["setup", "configuration", "installation"]
+description: Use when the user wants to install, configure, diagnose, or troubleshoot ScholarAIO, including setup check, dependency status, API keys, and bilingual setup flow.
 ---
 # Setup / 环境配置
 
@@ -50,6 +46,8 @@ scholaraio setup check --lang zh
   - `embed`: 语义向量检索（Qwen3 嵌入模型）
   - `topics`: BERTopic 主题建模
   - `import`: Endnote / Zotero 导入
+  - `Graphviz dot`: `diagram --format svg` 的 DOT→SVG 渲染后端；Linux 可用 `sudo apt-get install graphviz`
+  - `Inkscape`: Beamer `\includesvg` 插入 SVG 时需要；Linux 可用 `sudo apt-get install inkscape`
   - `full`: 全部功能
 - 运行 `pip install -e ".[full]"` 或按需安装
 

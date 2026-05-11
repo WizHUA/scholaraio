@@ -5,7 +5,8 @@ import sqlite3
 
 import pytest
 
-from scholaraio.toolref import (
+from scholaraio.core.config import _build_config
+from scholaraio.stores.toolref import (
     _build_bioinformatics_manifest,
     _build_openfoam_manifest,
     _clean_manifest_text,
@@ -33,13 +34,13 @@ from scholaraio.toolref import (
 
 @pytest.fixture
 def toolref_mod():
-    from scholaraio import toolref as mod
-    from scholaraio.toolref import _legacy_snapshot as legacy_mod
-    from scholaraio.toolref import fetch as fetch_mod
-    from scholaraio.toolref import indexing as indexing_mod
-    from scholaraio.toolref import manifest as manifest_mod
-    from scholaraio.toolref import paths as paths_mod
-    from scholaraio.toolref import search as search_mod
+    from scholaraio.stores import toolref as mod
+    from scholaraio.stores.toolref import _legacy_snapshot as legacy_mod
+    from scholaraio.stores.toolref import fetch as fetch_mod
+    from scholaraio.stores.toolref import indexing as indexing_mod
+    from scholaraio.stores.toolref import manifest as manifest_mod
+    from scholaraio.stores.toolref import paths as paths_mod
+    from scholaraio.stores.toolref import search as search_mod
 
     return {
         "api": mod,
@@ -65,6 +66,14 @@ def test_toolref_package_compat_for_default_dir_and_requests(tmp_path, toolref_m
         assert mod.requests is fetch_mod.requests
     finally:
         mod._DEFAULT_TOOLREF_DIR = original_root
+
+
+def test_toolref_path_helpers_use_configured_root(tmp_path, toolref_mod):
+    cfg = _build_config({"paths": {"toolref_root": "stores/toolref"}}, tmp_path)
+    expected_db = (tmp_path / "stores" / "toolref" / "qe" / "toolref.db").resolve()
+
+    assert toolref_mod["paths"]._db_path("qe", cfg) == expected_db
+    assert toolref_mod["legacy"]._db_path("qe", cfg) == expected_db
 
 
 def test_index_tool_returns_final_unique_entry_count(tmp_path, monkeypatch, toolref_mod):
@@ -118,7 +127,7 @@ def test_index_tool_returns_final_unique_entry_count(tmp_path, monkeypatch, tool
 
 
 def test_ensure_db_drops_legacy_fts_triggers(tmp_path):
-    from scholaraio.toolref.storage import _ensure_db
+    from scholaraio.stores.toolref.storage import _ensure_db
 
     db = tmp_path / "toolref.db"
     conn = sqlite3.connect(db)
@@ -195,7 +204,7 @@ def test_toolref_use_rejects_unsafe_version_path(tmp_path, monkeypatch, toolref_
 
     monkeypatch.setattr(paths_mod, "_DEFAULT_TOOLREF_DIR", tmp_path)
 
-    with pytest.raises(ValueError, match="非法版本号"):
+    with pytest.raises(ValueError, match="Invalid version"):
         toolref_use("qe", "../outside", cfg=None)
 
     assert not (tmp_path / "qe" / "current").exists()
@@ -1186,7 +1195,7 @@ namelist SYSTEM {
 def test_toolref_show_falls_back_to_program_manual_page(tmp_path, monkeypatch, toolref_mod):
     import sqlite3
 
-    from scholaraio import toolref as mod
+    from scholaraio.stores import toolref as mod
 
     paths_mod = toolref_mod["paths"]
 
@@ -1275,7 +1284,7 @@ Thermostat and barostat.
 def test_toolref_show_qe_prefers_exact_program_title_match(tmp_path, monkeypatch, toolref_mod):
     import sqlite3
 
-    from scholaraio import toolref as mod
+    from scholaraio.stores import toolref as mod
 
     paths_mod = toolref_mod["paths"]
 
@@ -1311,7 +1320,7 @@ def test_toolref_show_qe_prefers_exact_program_title_match(tmp_path, monkeypatch
 def test_toolref_show_lammps_resolves_alias_from_query(tmp_path, monkeypatch, toolref_mod):
     import sqlite3
 
-    from scholaraio import toolref as mod
+    from scholaraio.stores import toolref as mod
 
     paths_mod = toolref_mod["paths"]
 
@@ -1367,7 +1376,7 @@ def test_toolref_show_lammps_resolves_alias_from_query(tmp_path, monkeypatch, to
 def test_toolref_search_lammps_boosts_exact_alias_match(tmp_path, monkeypatch, toolref_mod):
     import sqlite3
 
-    from scholaraio import toolref as mod
+    from scholaraio.stores import toolref as mod
 
     paths_mod = toolref_mod["paths"]
 
@@ -1423,7 +1432,7 @@ def test_toolref_search_lammps_boosts_exact_alias_match(tmp_path, monkeypatch, t
 def test_toolref_search_fallback_keeps_version_program_and_section_filters(tmp_path, monkeypatch, toolref_mod):
     import sqlite3
 
-    from scholaraio import toolref as mod
+    from scholaraio.stores import toolref as mod
 
     paths_mod = toolref_mod["paths"]
 
@@ -1502,7 +1511,7 @@ def test_toolref_search_fallback_keeps_version_program_and_section_filters(tmp_p
 def test_toolref_search_scores_each_row_once(tmp_path, monkeypatch, toolref_mod):
     import sqlite3
 
-    from scholaraio import toolref as mod
+    from scholaraio.stores import toolref as mod
 
     paths_mod = toolref_mod["paths"]
     search_mod = toolref_mod["search"]
@@ -1569,7 +1578,7 @@ def test_parse_gromacs_mdp_block_keeps_option_descriptions(tmp_path):
         encoding="utf-8",
     )
 
-    records = __import__("scholaraio.toolref", fromlist=["_parse_gromacs_rst"])._parse_gromacs_rst(rst)
+    records = __import__("scholaraio.stores.toolref", fromlist=["_parse_gromacs_rst"])._parse_gromacs_rst(rst)
     pcoupl = next(r for r in records if r["title"] == "pcoupl")
     constraints = next(r for r in records if r["title"] == "constraints")
 
@@ -1704,7 +1713,7 @@ def test_toolref_search_matches_legacy_tie_break_order(tmp_path, monkeypatch, to
 def test_toolref_search_gromacs_boosts_parameter_hits(tmp_path, monkeypatch, toolref_mod):
     import sqlite3
 
-    from scholaraio import toolref as mod
+    from scholaraio.stores import toolref as mod
 
     paths_mod = toolref_mod["paths"]
 
@@ -1760,7 +1769,7 @@ def test_toolref_search_gromacs_boosts_parameter_hits(tmp_path, monkeypatch, too
 def test_toolref_search_gromacs_v_rescale_maps_to_tcoupl(tmp_path, monkeypatch, toolref_mod):
     import sqlite3
 
-    from scholaraio import toolref as mod
+    from scholaraio.stores import toolref as mod
 
     paths_mod = toolref_mod["paths"]
 
@@ -1816,7 +1825,7 @@ def test_toolref_search_gromacs_v_rescale_maps_to_tcoupl(tmp_path, monkeypatch, 
 def test_toolref_search_gromacs_pressure_coupling_prefers_pcoupl(tmp_path, monkeypatch, toolref_mod):
     import sqlite3
 
-    from scholaraio import toolref as mod
+    from scholaraio.stores import toolref as mod
 
     paths_mod = toolref_mod["paths"]
 
@@ -1872,7 +1881,7 @@ def test_toolref_search_gromacs_pressure_coupling_prefers_pcoupl(tmp_path, monke
 def test_toolref_search_bioinformatics_multiple_sequence_alignment_prefers_mafft(tmp_path, monkeypatch, toolref_mod):
     import sqlite3
 
-    from scholaraio import toolref as mod
+    from scholaraio.stores import toolref as mod
 
     paths_mod = toolref_mod["paths"]
 
@@ -1928,7 +1937,7 @@ def test_toolref_search_bioinformatics_multiple_sequence_alignment_prefers_mafft
 def test_toolref_search_bioinformatics_bam_indexing_prefers_samtools_index(tmp_path, monkeypatch, toolref_mod):
     import sqlite3
 
-    from scholaraio import toolref as mod
+    from scholaraio.stores import toolref as mod
 
     paths_mod = toolref_mod["paths"]
 

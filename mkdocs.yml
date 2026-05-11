@@ -4,6 +4,10 @@ site_url: https://zimoliao.github.io/scholaraio/
 repo_url: https://github.com/zimoliao/scholaraio
 repo_name: zimoliao/scholaraio
 
+exclude_docs: |
+  development/
+  superpowers/
+
 theme:
   name: material
   palette:
@@ -29,15 +33,25 @@ nav:
   - Home: index.md
   - Getting Started:
       - Installation: getting-started/installation.md
+      - Upgrading to 1.4: getting-started/upgrading-to-1.4.md
       - Agent Setup: getting-started/agent-setup.md
+      - Agent Reference: guide/agent-reference.md
       - Configuration: getting-started/configuration.md
   - User Guide:
       - CLI Reference: guide/cli-reference.md
       - Search & Browse: guide/search.md
+      - Insights: guide/insights.md
+      - Translation: guide/translate.md
       - Scientific Tool Onboarding: guide/toolref-onboarding.md
       - Ingestion: guide/ingestion.md
       - Writing: guide/writing.md
       - Webtools Integration: guide/webtools-integration.md
+      - Paper2Any Integration: guide/paper2any-integration.md
+  - Writing Guides:
+      - Paper Reading Framework: writing-guide/paper-reading-framework.md
+      - Academic Survey Writing: writing-guide/academic-survey-writing-guide.md
+      - Academic Beamer Guide: writing-guide/academic-beamer-guide.md
+      - Graphviz Diagram Guide: writing-guide/graphviz-guide.md
   - API Reference: api/index.md
   - Contributing: contributing.md
   - Changelog: changelog.md

@@ -1,6 +1,6 @@
 ---
 name: scientific-tool-onboarding
-description: Use when adding or upgrading ScholarAIO support for a new scientific computing tool, especially when the work needs official docs ingestion, toolref integration, lightweight skill design, and end-to-end CLI verification
+description: Use when adding or upgrading ScholarAIO support for a scientific computing tool, especially official docs ingestion, toolref integration, lightweight skill design, and end-to-end CLI verification.
 ---
 
 # Scientific Tool Onboarding
@@ -108,7 +108,7 @@ description: Use when adding or upgrading ScholarAIO support for a new scientifi
 最低应有测试：
 - 解析器能提取 title / synopsis / content
 - 版本或 program 规范化逻辑
-- top-level `scholaraio.toolref` 入口在内部重构后仍保持兼容
+- top-level `scholaraio.stores.toolref` 入口在内部重构后仍保持兼容
 - manifest 工具的“是否完整”判断
 - 失败后残缺目录不会被误判成已完成
 - 用户自然说法对应的 alias / query expansion
@@ -121,7 +121,7 @@ description: Use when adding or upgrading ScholarAIO support for a new scientifi
 
 如果这次工作包含 `toolref` 内部重构或拆包，必须额外补这类兼容测试：
 
-- `import scholaraio.toolref` 后旧调用路径仍可用
+- `import scholaraio.stores.toolref` 后旧调用路径仍可用
 - 顶层兼容 patch 点仍能影响真实行为
 - CLI 不需要知道内部模块名变化
 - 旧缓存数据库在新 schema / trigger 下不会损坏或重复触发
@@ -210,7 +210,7 @@ scholaraio toolref search <tool> "<real query>"
 不要把内部包结构泄漏到 skill：
 
 - skill 和用户文档应该引用 `scholaraio toolref ...`
-- 如果确实需要提 Python API，引用顶层 `scholaraio.toolref`
+- 如果确实需要提 Python API，引用顶层 `scholaraio.stores.toolref`
 - 不要把 `fetch.py` / `manifest.py` / `storage.py` 之类内部模块写成公开入口
 
 ### 8. 最后做发布门槛检查
@@ -238,7 +238,7 @@ scholaraio toolref search <tool> "<real query>"
 - 只看测试，不自己用 CLI
 - 第一次抓取失败后没处理脏目录
 - `page_name` 为抓取方便而设计，导致 `show` 很难用
-- 内部拆包后忘了保护 `scholaraio.toolref` 顶层兼容面
+- 内部拆包后忘了保护 `scholaraio.stores.toolref` 顶层兼容面
 - 把 scientific skill 写成超长命令手册
 - 新 skill 没有写清楚覆盖缺口时 agent 应如何继续服务用户
 - 用第三方教程代替官方文档

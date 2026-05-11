@@ -1,10 +1,6 @@
 ---
 name: enrich
-description: Enrich paper metadata using LLM extraction. Extract table of contents (TOC), conclusions (L3), and backfill abstracts. Use when the user wants to extract conclusions, build TOC, or backfill missing abstracts. For citation count updates, see the /citations skill.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["academic", "papers", "metadata", "enrichment", "llm"]
+description: Use when the user wants LLM-based metadata enrichment, table-of-contents extraction, L3 conclusion extraction, or abstract backfilling for library papers.
 ---
 # 富化论文内容
 

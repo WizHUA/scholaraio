@@ -1,10 +1,6 @@
 ---
 name: search
-description: Search academic papers in the local ScholarAIO knowledge base. Supports unified search (keyword + semantic fusion), keyword-only (FTS5), semantic-only (FAISS), author search, and federated search across main library, explore databases, and arXiv. Use when the user wants to find papers, look up literature, search by author, explore research topics, or search across multiple sources. For citation rankings and citation count updates, see the /citations skill.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["academic", "search", "papers", "semantic", "fts5"]
+description: Use when the user wants to find academic papers, search the local library, run keyword or semantic search, search by author, explore topics, or federate across library, explore databases, and arXiv.
 ---
 # 文献搜索
 
@@ -22,31 +18,40 @@ tags: ["academic", "search", "papers", "semantic", "fts5"]
 
 2. 从用户输入中提取：
    - **查询词**：用户想搜索的内容
-   - **返回数量**：用户指定的 `--top N`，未指定则使用默认值
+   - **返回数量**：使用规范参数 `--limit N`；未指定则使用默认值
    - **年份过滤**：`--year 2023`（单年）、`--year 2020-2024`（范围）、`--year 2020-`（起始年至今）
    - **期刊过滤**：`--journal "Fluid Mechanics"`（模糊匹配）
    - **类型过滤**：`--type review`（模糊匹配，常见值：`review`、`journal-article`、`book-chapter`）
+
+   **查询词拆分原则**：不要把“作者 + 年份 + 关键词/题名词”全部拼进同一个 query。这条规则同时适用于 `search`、`vsearch` 和 `usearch`：
+   - `search` 会把整串文本交给 FTS5 `MATCH`；作者缩写、全名、标点或年份 token 只要和索引不一致，就可能让原本可命中的论文搜不出来。
+   - `vsearch` 通常不会因此空结果，但作者/年份/期刊等限定词会作为噪声进入 query embedding，可能拉低相关论文分数或引入相近但不精确的结果。
+   - `usearch` 同时跑 FTS 和向量；脏 query 可能让 FTS leg 失效，只剩语义命中，结果不再获得 `both` 加分。
+   - 年份必须优先放到 `--year`，不要放进 query。
+   - 明确按作者找时用 `search-author "<作者姓或姓名>"`，不要把作者混进主题 query。
+   - 已知题名或主题时，query 保持为最稳定的题名/主题关键词；需要作者/年份约束时分步过滤或二次确认。
+   - 如果第一次无结果，先去掉作者缩写、年份、机构、期刊等限定词，只保留题名核心词或主题词再搜。
 
 3. 执行搜索命令：
 
 **融合检索（默认）：**
 ```bash
-scholaraio usearch "<查询词>" --top <N> [--year <Y>] [--journal <J>] [--type <T>]
+scholaraio usearch "<查询词>" --limit <N> [--year <Y>] [--journal <J>] [--type <T>]
 ```
 
 **关键词搜索：**
 ```bash
-scholaraio search "<查询词>" --top <N> [--year <Y>] [--journal <J>] [--type <T>]
+scholaraio search "<查询词>" --limit <N> [--year <Y>] [--journal <J>] [--type <T>]
 ```
 
 **语义搜索：**
 ```bash
-scholaraio vsearch "<查询词>" --top <N> [--year <Y>] [--journal <J>] [--type <T>]
+scholaraio vsearch "<查询词>" --limit <N> [--year <Y>] [--journal <J>] [--type <T>]
 ```
 
 **作者搜索：**
 ```bash
-scholaraio search-author "<作者名>" --top <N> [--year <Y>] [--journal <J>] [--type <T>]
+scholaraio search-author "<作者名>" --limit <N> [--year <Y>] [--journal <J>] [--type <T>]
 ```
 
 > **引用量排序**：使用 `/citations` skill 中的 `scholaraio top-cited` 命令。
@@ -54,7 +59,7 @@ scholaraio search-author "<作者名>" --top <N> [--year <Y>] [--journal <J>] [-
 **联邦搜索（跨库 + arXiv）：**
 ```bash
 # 同时搜主库和 arXiv
-scholaraio fsearch "<查询词>" --scope main,arxiv --top <N>
+scholaraio fsearch "<查询词>" --scope main,arxiv --limit <N>
 
 # 同时搜主库和 proceedings
 scholaraio fsearch "<查询词>" --scope main,proceedings
@@ -79,7 +84,7 @@ scholaraio fsearch "<查询词>" --scope main,proceedings,explore:*,arxiv
    - `fts`：仅关键词命中
    - `vec`：仅语义命中
 
-5. **复杂查询**：当 CLI 参数组合无法满足需求时（如按一作姓氏首字母筛选、多条件交叉、自定义排序等），直接写 Python 读 `data/papers/*/meta.json` 做查询。JSON 关键字段：
+5. **复杂查询**：当 CLI 参数组合无法满足需求时（如按一作姓氏首字母筛选、多条件交叉、自定义排序等），直接写 Python 读 configured papers library 下的 `*/meta.json` 做查询。JSON 关键字段：
 
 ```
 title, authors, first_author, first_author_lastname, year, doi, journal,
@@ -93,7 +98,7 @@ ids, toc, l3_conclusion
 → 执行 `usearch "turbulent boundary layer"`
 
 用户说："用语义搜索找 drag reduction 的文献，给我前5篇"
-→ 执行 `vsearch "drag reduction" --top 5`
+→ 执行 `vsearch "drag reduction" --limit 5`
 
 用户说："找 Liao Z-M 的论文"
 → 执行 `search-author "Liao"`
@@ -103,6 +108,9 @@ ids, toc, l3_conclusion
 
 用户说："2020年以后关于 drag reduction 的论文"
 → 执行 `usearch "drag reduction" --year 2020-`
+
+用户说："找 Moin 1982 numerical investigation turbulent channel flow"
+→ 执行 `usearch "numerical investigation turbulent channel flow" --year 1982`；必要时再用 `search-author "Moin" --year 1982` 交叉确认，不要执行 `search "P Moin 1982 numerical investigation turbulent channel flow"`
 
 用户说："JFM 上发的湍流论文"
 → 执行 `usearch "turbulence" --journal "Fluid Mechanics"`

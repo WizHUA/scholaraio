@@ -70,9 +70,17 @@ skills:
     path: .claude/skills/audit
     description: "Audit paper data quality: missing fields, filename issues, DOI duplicates, LLM deep diagnosis"
 
+  - name: scholaraio/academic-writing
+    path: .claude/skills/academic-writing
+    description: "Route academic-writing requests by deliverable: review, paper sections, rebuttal, PPT, poster, or technical report"
+
   - name: scholaraio/literature-review
     path: .claude/skills/literature-review
     description: "Write a literature review based on workspace papers: topic organization, narrative, gap identification"
+
+  - name: scholaraio/paper-guided-reading
+    path: .claude/skills/paper-guided-reading
+    description: "Guide single-paper deep reading from fuzzy search to structured full-text analysis and notes capture"
 
   - name: scholaraio/paper-writing
     path: .claude/skills/paper-writing
@@ -93,6 +101,14 @@ skills:
   - name: scholaraio/research-gap
     path: .claude/skills/research-gap
     description: "Identify research gaps and open questions from literature in a workspace"
+
+  - name: scholaraio/technical-report
+    path: .claude/skills/technical-report
+    description: "Organize technical reports and research briefings from literature analysis into report-oriented deliverables"
+
+  - name: scholaraio/poster
+    path: .claude/skills/poster
+    description: "Organize academic poster workflows with section planning, figure-text balance, and packaging guidance"
 
   - name: scholaraio/metrics
     path: .claude/skills/metrics

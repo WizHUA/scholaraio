@@ -1,10 +1,6 @@
 ---
 name: review-response
-description: Draft point-by-point responses to peer review comments. Locates supporting evidence from workspace papers and the original manuscript. Use when the user receives reviewer feedback and needs to write a rebuttal or revision response letter.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["academic", "writing", "peer-review", "rebuttal"]
+description: Use when the user receives peer review comments and wants a rebuttal, response letter, point-by-point reply, or evidence-backed revision response.
 ---
 # 审稿回复
 

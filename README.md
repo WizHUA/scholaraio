@@ -47,6 +47,34 @@ scholaraio setup
 
 Then open the repository in Codex, Claude Code, or another supported agent. In this setup, the agent gets the fullest experience: bundled instructions, local skills, the CLI, and the complete codebase context are all available directly. For Claude Code plugins, Codex/OpenClaw skill registration, and other setup paths, see [`docs/getting-started/agent-setup.md`](docs/getting-started/agent-setup.md).
 
+## Upgrading To 1.4
+
+ScholarAIO 1.4 is a runtime-layout upgrade. It does **not** migrate user data
+automatically during `git pull`, `pip install -U`, or normal CLI startup. That is
+intentional: data movement is an explicit offline operation with a migration
+journal and verification.
+
+Recommended path:
+
+```bash
+# 1. Update the code/package
+git pull
+pip install -e ".[full]"
+
+# 2. From the ScholarAIO runtime root, inspect and migrate explicitly
+scholaraio migrate status
+scholaraio migrate upgrade --migration-id upgrade-1.4.0 --confirm
+scholaraio migrate verify --migration-id upgrade-1.4.0
+
+# 3. Rebuild indexes after migrated data lands in the fresh layout
+scholaraio index --rebuild
+```
+
+For the lowest-risk upgrade, keep or copy your old ScholarAIO folder first, then
+run the migration in the upgraded checkout that contains your `data/`,
+`workspace/`, and `config*.yaml`. See
+[`docs/getting-started/upgrading-to-1.4.md`](docs/getting-started/upgrading-to-1.4.md).
+
 ## What It Does
 
 |  | Feature | Details |
@@ -61,12 +89,28 @@ Then open the repository in Codex, Claude Code, or another supported agent. In t
 | **Multi-Source Import** | Connect your existing library | Import directly from reference managers, PDFs, and Markdown without rebuilding your library from scratch |
 | **Workspaces** | Organize by project | Manage paper subsets with scoped search and BibTeX export |
 | **Multi-Format Export** | BibTeX, RIS, Markdown, DOCX | Export your full library or a workspace for Zotero, Endnote, submission, or sharing |
+| **Metadata Scrub** | Incremental cleanup after enrich | Review and repair low-quality titles, authors, and years for non-standard documents, then mark reviewed records to skip future passes |
 | **Persistent Notes** | Cross-session memory | Keep analysis notes for each paper so future sessions can reuse them instead of starting over |
 | **Research Insights** | Reading behavior analytics | Search hot keywords, most-read papers, reading trends, and semantic neighbor recommendations for papers you haven't read yet |
 | **Federated Discovery** | Cross-library search | Search your main library, exploration libraries, and arXiv from one entry point instead of hopping across tools |
+| **Remote Backup** | Rsync-based sync | Back up the ScholarAIO `data/` workspace to configured remote targets through named rsync plans |
 | **AI-for-Science Runtime** | Use scientific software more accurately | Use scientific software against official documentation at runtime instead of guessing commands and parameters |
 | **Extensible Tool Onboarding** | Keep adding the tools that matter | As new scientific tools and workflows become important, the system can keep expanding |
-| **Academic Writing** | AI-assisted writing | Literature review, paper sections, citation check, rebuttal, and gap analysis — with every citation traceable to your own library |
+| **Academic Writing** | AI-assisted writing | Router-first workflows for literature review, guided single-paper reading, paper sections, citation check, rebuttal, gap analysis, poster packages, and technical reports — with every citation traceable to your own library |
+
+For writing tasks, start with the router-style writing entry when the deliverable is clear but the workflow is not. The current writing stack is organized around:
+
+- `academic-writing`: route by deliverable and writing stage
+- `literature-review`: long-form review and survey writing
+- `paper-guided-reading`: guided deep reading of a single paper from fuzzy search to full-text analysis
+- `paper-writing`: manuscript sections and paper-focused drafting
+- `review-response`: rebuttal and response-letter workflows
+- `research-gap`: gap analysis and open-question reports
+- `technical-report`: technical briefings and topic reports
+- `poster`: poster-oriented content packaging
+- `document`: final DOCX / PPTX packaging
+
+See [`docs/guide/writing.md`](docs/guide/writing.md) for the full writing map.
 
 ## Works With Your Agent
 
@@ -77,11 +121,12 @@ ScholarAIO is designed to be **agent-agnostic**, but different agents expose dif
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `CLAUDE.md` + `.claude/skills/` | Claude plugin marketplace |
 | [Codex](https://openai.com/codex) / OpenClaw | `AGENTS.md` + `.agents/skills/` | Symlink skills into `~/.agents/skills/` |
 | [Cline](https://github.com/cline/cline) | `.clinerules` + `.claude/skills/` | CLI + skills |
+| [Qwen](https://qwen.ai/) | `.qwen/QWEN.md` + `.qwen/skills/` | CLI + skills |
 | [Cursor](https://cursor.sh) | `.cursor/rules/scholaraio.mdc` + `AGENTS.md` (`.cursorrules` legacy fallback) | CLI + skills |
 | [Windsurf](https://codeium.com/windsurf) | `.windsurfrules` | CLI + skills |
 | [GitHub Copilot](https://github.com/features/copilot) | `.github/copilot-instructions.md` | CLI + skills |
 
-Skills follow the open [AgentSkills.io](https://agentskills.io) standard, and `.agents/skills/` is a symlink to `.claude/skills/` so different agents can discover and reuse the same skills.
+Skills follow the open [AgentSkills.io](https://agentskills.io) standard, and `.agents/skills/` and `.qwen/skills/` are symlinks to `.claude/skills/` so different agents can discover and reuse the same skills. Qwen-specific project context lives in `.qwen/QWEN.md`.
 
 **Migrating from existing tools?** Import directly from Endnote (XML/RIS) and Zotero (Web API or local SQLite), with PDFs, metadata, and references brought over together. More import sources are on the roadmap.
 
@@ -109,15 +154,20 @@ scholaraio/             # Python package — CLI and all core modules
   ingest/               #   PDF parsing + metadata extraction pipeline
   sources/              #   External source adapters (arXiv / Endnote / Zotero)
 
-.claude/skills/         # Agent skills (AgentSkills.io format)
+.claude/skills/         # Agent skills (canonical source)
 .agents/skills/         # ↑ symlink for cross-agent discovery
-data/papers/            # Your paper library (gitignored)
-data/proceedings/       # Proceedings library (gitignored)
-data/inbox/             # Drop PDFs here for ingestion
-data/inbox-proceedings/ # Drop proceedings volumes here for dedicated ingest
+.qwen/QWEN.md           # ↑ project context for Qwen Code
+.qwen/skills/           # ↑ symlink for Qwen agent skill discovery
+data/libraries/papers/  # Paper library (fresh default)
+data/libraries/proceedings/ # Proceedings library (fresh default)
+data/spool/inbox/       # Drop PDFs here for ingestion
+data/spool/inbox-proceedings/ # Dedicated proceedings ingest inbox
 ```
 
-Full module reference → [`CLAUDE.md`](CLAUDE.md) or [`AGENTS.md`](AGENTS.md)
+Upgrading an older runtime layout? See [Upgrading To 1.4](#upgrading-to-14).
+
+Agent entry docs → [`CLAUDE.md`](CLAUDE.md) or [`AGENTS.md`](AGENTS.md)
+Deep agent reference → [`docs/guide/agent-reference.md`](docs/guide/agent-reference.md)
 
 ## Citation
 

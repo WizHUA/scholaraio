@@ -1,14 +1,10 @@
 ---
 name: translate
-description: Translate paper markdown to a target language (default Chinese). Preserves LaTeX formulas, code blocks, and images. Supports single paper or batch translation. Use when the user wants to read papers in their native language or translate non-Chinese documents.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["academic", "papers", "translation", "multilingual"]
+description: Use when the user wants to translate paper markdown, full papers, or batches into another language while preserving formulas, code blocks, and images.
 ---
 # 论文翻译
 
-将论文 Markdown 翻译为目标语言（默认中文），保留 LaTeX 公式、代码块、图片引用和 Markdown 格式。翻译结果保存为论文目录内的 `paper_{lang}.md`，原文保持不变；如需可携带分享，可额外导出到 `workspace/translation-ws/<Author-Year-Title>/`。
+将论文 Markdown 翻译为目标语言（默认中文），保留 LaTeX 公式、代码块、图片引用和 Markdown 格式。翻译结果保存为论文目录内的 `paper_{lang}.md`，原文保持不变；如需可携带分享，可额外导出到 `workspace/_system/translation-bundles/<Author-Year-Title>/`。
 
 当前实现支持：
 - 单篇翻译时按 `config.translate.concurrency` 并发请求多个分块，并在终端显示块级进度
@@ -16,7 +12,7 @@ tags: ["academic", "papers", "translation", "multilingual"]
 - 网络抖动时对单块做超时重试与指数退避（默认最多 5 次尝试）
 - 中途中断后可从临时工作目录继续续翻
 - `--force` 会清理旧的临时翻译目录并从头重新翻译
-- `--portable` 会额外生成 `workspace/translation-ws/<Author-Year-Title>/paper_{lang}.md` 和对应的 `images/`
+- `--portable` 会额外生成 `workspace/_system/translation-bundles/<Author-Year-Title>/paper_{lang}.md` 和对应的 `images/`
 
 ## 配置
 
@@ -71,9 +67,9 @@ scholaraio pipeline --steps toc,l3,translate
 7. 状态写入 `state.json` / `chunks.json`；失败块会记录错误并在下次续翻时单独补跑
 8. 每个分块带超时重试和指数退避
 9. 若已有连续成功前缀，则同步刷新 `paper_{lang}.md`，方便中途查看已完成部分
-10. 若指定 `--portable`，则额外复制一份到 `workspace/translation-ws/<Author-Year-Title>/`，并复制 `images/` 以保证脱离原目录后图片仍可用
+10. 若指定 `--portable`，则额外复制一份到 `workspace/_system/translation-bundles/<Author-Year-Title>/`，并复制 `images/` 以保证脱离原目录后图片仍可用
 11. 若前面某块失败但后面某些块已成功，这些成功块仍会保留在临时工作目录里；下次续翻时会跳过已成功块，只补失败或未完成的块
-11. 全部完成后删除临时工作目录，并在 `meta.json` 中记录翻译元数据
+12. 全部完成后删除临时工作目录，并在 `meta.json` 中记录翻译元数据
 
 ## 进度与续翻
 

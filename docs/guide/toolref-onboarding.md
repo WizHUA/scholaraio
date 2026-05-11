@@ -23,16 +23,15 @@ The stable public surfaces are:
 - `scholaraio toolref list [tool]`
 - `scholaraio toolref show <tool> ...`
 - `scholaraio toolref search <tool> "..."`
-- the top-level Python facade `scholaraio.toolref`
 
 User-facing documentation should stay anchored to those surfaces.
 
 Do not teach users to depend on internal modules such as:
 
-- `scholaraio.toolref.fetch`
-- `scholaraio.toolref.manifest`
-- `scholaraio.toolref.storage`
-- `scholaraio.toolref.search`
+- `scholaraio.stores.toolref.fetch`
+- `scholaraio.stores.toolref.manifest`
+- `scholaraio.stores.toolref.storage`
+- `scholaraio.stores.toolref.search`
 
 Those modules exist for implementation, not as the public onboarding surface.
 

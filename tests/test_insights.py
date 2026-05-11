@@ -1,4 +1,4 @@
-"""Tests for scholaraio.insights and the insights CLI surface."""
+"""Tests for scholaraio.services.insights and the insights CLI surface."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 
-from scholaraio import cli, insights, metrics
+from scholaraio.interfaces.cli import compat as cli
+from scholaraio.services import insights, metrics
 
 
 def test_extract_hot_keywords_filters_stopwords_and_punctuation():
@@ -110,8 +111,8 @@ def test_cmd_insights_smoke_with_metrics_store(tmp_path: Path, monkeypatch):
         )
 
     ws_dir = tmp_path / "workspace" / "cooling-study"
-    ws_dir.mkdir(parents=True)
-    (ws_dir / "papers.json").write_text(json.dumps(["Paper-A", "Paper-B"]), encoding="utf-8")
+    (ws_dir / "refs").mkdir(parents=True)
+    (ws_dir / "refs" / "papers.json").write_text(json.dumps(["Paper-A", "Paper-B"]), encoding="utf-8")
 
     store = metrics.init(tmp_path / "metrics.db", "test-session")
     store.record("search", "usearch", detail={"query": "heat transfer wall motion"})
@@ -122,7 +123,7 @@ def test_cmd_insights_smoke_with_metrics_store(tmp_path: Path, monkeypatch):
     messages: list[str] = []
     monkeypatch.setattr(cli, "ui", lambda msg="": messages.append(msg))
     monkeypatch.setattr(
-        "scholaraio.vectors.vsearch",
+        "scholaraio.services.vectors.vsearch",
         lambda query, db_path, top_k, cfg: [
             {"dir_name": "Paper-B", "score": 0.93},
             {"dir_name": "Paper-C", "score": 0.81},
@@ -138,10 +139,89 @@ def test_cmd_insights_smoke_with_metrics_store(tmp_path: Path, monkeypatch):
         metrics.reset()
 
     joined = "\n".join(messages)
-    assert "科研行为分析（过去 30 天）" in joined
-    assert "【搜索热词前 10】" in joined
-    assert "【最常阅读论文前 10】" in joined
+    assert "Research behavior analytics (last 30 days)" in joined
+    assert "【Top 10 search terms】" in joined
+    assert "【Top 10 most-read papers】" in joined
     assert "Heat Transfer in Turbulent Flow" in joined
     assert "Compliant Walls for Cooling" in joined
-    assert "【活跃工作区】" in joined
+    assert "【Active workspaces】" in joined
     assert "cooling-study" in joined
+
+
+def test_cmd_insights_uses_configured_workspace_dir(tmp_path: Path, monkeypatch):
+    papers_dir = tmp_path / "papers"
+    paper_dir = papers_dir / "Paper-A"
+    paper_dir.mkdir(parents=True)
+    (paper_dir / "meta.json").write_text(
+        json.dumps({"title": "Heat Transfer in Turbulent Flow", "abstract": "wall motion and convection"}),
+        encoding="utf-8",
+    )
+
+    custom_ws = tmp_path / "projects" / "cooling-study"
+    (custom_ws / "refs").mkdir(parents=True)
+    (custom_ws / "refs" / "papers.json").write_text(json.dumps(["Paper-A"]), encoding="utf-8")
+
+    legacy_ws = tmp_path / "workspace" / "legacy-study"
+    (legacy_ws / "refs").mkdir(parents=True)
+    (legacy_ws / "refs" / "papers.json").write_text(json.dumps(["Paper-A", "Paper-A"]), encoding="utf-8")
+
+    store = metrics.init(tmp_path / "metrics.db", "test-session")
+    store.record("search", "usearch", detail={"query": "heat transfer"})
+    store.record("read", "Paper-A", detail={"title": "Heat Transfer in Turbulent Flow"})
+
+    messages: list[str] = []
+    monkeypatch.setattr(cli, "ui", lambda msg="": messages.append(msg))
+    monkeypatch.setattr("scholaraio.services.vectors.vsearch", lambda query, db_path, top_k, cfg: [])
+
+    cfg = SimpleNamespace(
+        _root=tmp_path,
+        papers_dir=papers_dir,
+        index_db=tmp_path / "index.db",
+        workspace_dir=tmp_path / "projects",
+    )
+
+    try:
+        cli.cmd_insights(Namespace(days=30), cfg)
+    finally:
+        metrics.reset()
+
+    joined = "\n".join(messages)
+    assert "cooling-study" in joined
+    assert "legacy-study" not in joined
+
+
+def test_cmd_insights_supports_future_workspace_refs_layout(tmp_path: Path, monkeypatch):
+    papers_dir = tmp_path / "papers"
+    paper_dir = papers_dir / "Paper-A"
+    paper_dir.mkdir(parents=True)
+    (paper_dir / "meta.json").write_text(
+        json.dumps({"title": "Heat Transfer in Turbulent Flow", "abstract": "wall motion and convection"}),
+        encoding="utf-8",
+    )
+
+    future_ws = tmp_path / "projects" / "future-study" / "refs"
+    future_ws.mkdir(parents=True)
+    (future_ws / "papers.json").write_text(json.dumps(["Paper-A"]), encoding="utf-8")
+
+    store = metrics.init(tmp_path / "metrics.db", "test-session")
+    store.record("search", "usearch", detail={"query": "heat transfer"})
+    store.record("read", "Paper-A", detail={"title": "Heat Transfer in Turbulent Flow"})
+
+    messages: list[str] = []
+    monkeypatch.setattr(cli, "ui", lambda msg="": messages.append(msg))
+    monkeypatch.setattr("scholaraio.services.vectors.vsearch", lambda query, db_path, top_k, cfg: [])
+
+    cfg = SimpleNamespace(
+        _root=tmp_path,
+        papers_dir=papers_dir,
+        index_db=tmp_path / "index.db",
+        workspace_dir=tmp_path / "projects",
+    )
+
+    try:
+        cli.cmd_insights(Namespace(days=30), cfg)
+    finally:
+        metrics.reset()
+
+    joined = "\n".join(messages)
+    assert "future-study" in joined

@@ -20,6 +20,7 @@ ScholarAIO is a research infrastructure for AI agents. You interact with your li
 - **Extensible Tool Onboarding**: Keep adding the next scientific tool users need through a documented onboarding workflow
 - **Office Document Inspection**: Verify DOCX / PPTX / XLSX structure with `document inspect`
 - **Agent Skills**: Reusable workflows for search, writing, scientific runtime, and more
+- **Writing Router**: Start with `academic-writing` to route reviews, guided deep reading, paper sections, rebuttals, posters, and technical reports to the right workflow
 
 ## Quick Start
 
@@ -31,6 +32,7 @@ scholaraio setup
 See [Installation](getting-started/installation.md) for detailed instructions.
 If you are working from a local clone or contributing to ScholarAIO itself, use the editable install path shown there instead.
 See [Agent Setup](getting-started/agent-setup.md) for repo-open vs plugin setup paths.
+See [Agent Reference](guide/agent-reference.md) for the deeper agent, skill, and runtime map.
 See [Translation Guide](guide/translate.md) for translation, resume, and portable export behavior.
 See [Insights Guide](guide/insights.md) for reading/search behavior analytics.
 See [API Reference](api/index.md) for Python module documentation.

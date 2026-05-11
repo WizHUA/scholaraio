@@ -1,6 +1,8 @@
 # Insights Guide
 
-`scholaraio insights` summarizes recent search and reading behavior from `data/metrics.db`.
+`scholaraio insights` summarizes recent search and reading behavior from the metrics store.
+By default new instances use `data/state/metrics/metrics.db`, while existing `data/metrics.db`
+installations are still discovered automatically for compatibility.
 
 ## Usage
 
@@ -20,6 +22,6 @@ scholaraio insights --days 30
 
 ## Preconditions
 
-- Metrics data must already exist in `data/metrics.db`
+- Metrics data must already exist in the configured metrics store
 - Search commands and `show` accumulate the events used here
 - Neighbor recommendations require vector search to be available; otherwise the command degrades gracefully

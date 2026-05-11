@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from scholaraio.index import build_index, lookup_paper, search, unified_search
+from scholaraio.services.index import build_index, lookup_paper, search, unified_search
 
 
 class TestBuildAndSearch:
@@ -93,12 +93,26 @@ class TestBuildAndSearch:
         def boom(*_args, **_kwargs):
             raise RuntimeError("proxy unavailable")
 
-        monkeypatch.setattr("scholaraio.vectors.vsearch", boom)
+        monkeypatch.setattr("scholaraio.services.vectors.vsearch", boom)
 
         results = unified_search("turbulence", tmp_db)
 
         assert len(results) >= 1
         assert all(r["match"] == "fts" for r in results)
+
+    def test_unified_search_return_diagnostics_reports_vector_degradation(self, tmp_papers, tmp_db, monkeypatch):
+        build_index(tmp_papers, tmp_db)
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("proxy unavailable")
+
+        monkeypatch.setattr("scholaraio.services.vectors.vsearch", boom)
+
+        results, diagnostics = unified_search("turbulence", tmp_db, return_diagnostics=True)
+
+        assert len(results) >= 1
+        assert all(r["match"] == "fts" for r in results)
+        assert diagnostics == {"vector_degraded": True}
 
 
 class TestLookupPaper:

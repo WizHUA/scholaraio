@@ -1,6 +1,6 @@
 ---
 name: scientific-runtime
-description: Use when serving scientific CLI tasks through ScholarAIO, especially when the agent should prefer scholaraio toolref, handle partial coverage safely, and avoid turning user work into documentation maintenance.
+description: Use when serving scientific CLI tasks through ScholarAIO, especially when the agent should prefer scholaraio toolref, handle partial coverage safely, or avoid turning user work into documentation maintenance.
 ---
 
 # Scientific Runtime Protocol
@@ -58,14 +58,14 @@ The agent should prefer:
 The stable public surfaces are:
 
 - the `scholaraio toolref ...` CLI
-- the top-level `scholaraio.toolref` package facade
+- the top-level `scholaraio.stores.toolref` package facade
 
 The agent should not route users through internal implementation modules such as:
 
-- `scholaraio.toolref.fetch`
-- `scholaraio.toolref.manifest`
-- `scholaraio.toolref.storage`
-- `scholaraio.toolref.search`
+- `scholaraio.stores.toolref.fetch`
+- `scholaraio.stores.toolref.manifest`
+- `scholaraio.stores.toolref.storage`
+- `scholaraio.stores.toolref.search`
 
 Those internal module boundaries may change during refactors. User-facing guidance should stay anchored to the CLI and the top-level package behavior.
 
@@ -107,7 +107,7 @@ If it is a one-off edge case, do not derail the user task.
 
 When code changes are involved:
 
-- preserve the public `scholaraio.toolref` entry surface
+- preserve the public `scholaraio.stores.toolref` entry surface
 - treat package-internal reorganizations as an implementation detail
 - if a refactor changes behavior visible through CLI or top-level imports, treat that as a regression until proven otherwise
 

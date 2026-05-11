@@ -1,0 +1,94 @@
+name: macOS Semantic Smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - ".github/workflows/macos-semantic-smoke.yml"
+      - "pyproject.toml"
+      - "scholaraio/cli.py"
+      - "scholaraio/explore.py"
+      - "scholaraio/index.py"
+      - "scholaraio/vectors.py"
+      - "tests/test_cli_messages.py"
+      - "tests/test_index.py"
+      - "tests/test_vectors.py"
+  push:
+    branches: [main, master]
+    paths:
+      - ".github/workflows/macos-semantic-smoke.yml"
+      - "pyproject.toml"
+      - "scholaraio/cli.py"
+      - "scholaraio/explore.py"
+      - "scholaraio/index.py"
+      - "scholaraio/vectors.py"
+      - "tests/test_cli_messages.py"
+      - "tests/test_index.py"
+      - "tests/test_vectors.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-semantic-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semantic-smoke:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install semantic-search dependencies
+        run: pip install -e ".[dev,embed]"
+
+      - name: Smoke test issue-65 explore search flow
+        env:
+          HF_HUB_DISABLE_TELEMETRY: "1"
+          TOKENIZERS_PARALLELISM: "false"
+        run: |
+          export SMOKE_ROOT="$RUNNER_TEMP/issue-65-smoke"
+          mkdir -p "$SMOKE_ROOT/data/libraries/explore/issue-65-smoke"
+
+          cat > "$SMOKE_ROOT/config.yaml" <<'YAML'
+          embed:
+            provider: local
+            model: sentence-transformers/all-MiniLM-L6-v2
+            source: huggingface
+            device: cpu
+          YAML
+
+          cat > "$SMOKE_ROOT/data/libraries/explore/issue-65-smoke/papers.jsonl" <<'JSONL'
+          {"openalex_id":"https://openalex.org/W1","doi":"10.1234/issue65.1","title":"Boundary-layer turbulence transfer learning","abstract":"We study semantic retrieval for boundary layer turbulence with transformer embeddings on CPU systems and compare keyword and unified search behavior.","authors":["Alice Example"],"year":2024,"cited_by_count":7,"type":"article"}
+          {"openalex_id":"https://openalex.org/W2","doi":"10.1234/issue65.2","title":"Wake mixing in bluff-body flows","abstract":"This paper focuses on wake mixing and provides a distractor document for ranking checks.","authors":["Bob Example"],"year":2023,"cited_by_count":3,"type":"article"}
+          JSONL
+
+          export SCHOLARAIO_CONFIG="$SMOKE_ROOT/config.yaml"
+
+          scholaraio explore embed --name issue-65-smoke
+
+          scholaraio explore search --name issue-65-smoke "boundary layer turbulence" --mode semantic > "$SMOKE_ROOT/semantic.out"
+          scholaraio explore search --name issue-65-smoke "boundary layer turbulence" --mode unified > "$SMOKE_ROOT/unified.out"
+
+          grep -q "Boundary-layer turbulence transfer learning" "$SMOKE_ROOT/semantic.out"
+          grep -q "Boundary-layer turbulence transfer learning" "$SMOKE_ROOT/unified.out"
+          grep -q "score:" "$SMOKE_ROOT/semantic.out"
+          grep -q "score:" "$SMOKE_ROOT/unified.out"
+
+          echo "issue-65 macOS explore semantic/unified smoke passed"
+
+      - name: Run semantic-search regression tests
+        run: >
+          python -m pytest -q -p no:cacheprovider
+          tests/test_ci_workflows.py
+          tests/test_vectors.py
+          tests/test_index.py
+          tests/test_cli_messages.py
+          -k "macos_semantic_smoke_workflow_runs_issue_search_commands or embeds_query_before_loading_faiss_index or does_not_embed_when_vector_table_is_empty or unified_search or explore_search_semantic_reports_embedding_disabled_cleanly"

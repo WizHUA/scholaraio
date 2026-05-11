@@ -1,6 +1,6 @@
 ---
 name: bioinformatics
-description: Use when working on bioinformatics toolchains such as alignment, variant calling, phylogenetics, or protein-structure analysis, especially when the agent must route across BLAST, minimap2, samtools, bcftools, MAFFT, IQ-TREE, or ESMFold.
+description: Use when working on bioinformatics workflows such as alignment, variant calling, phylogenetics, or protein-structure analysis, especially across BLAST, minimap2, samtools, bcftools, MAFFT, IQ-TREE, or ESMFold.
 ---
 
 # 生物信息学分析

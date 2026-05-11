@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+import sys
+import types
+
 import pandas as pd
 
-from scholaraio.topics import get_outliers, get_topic_overview, get_topic_papers
+from scholaraio.services.topics import get_outliers, get_topic_overview, get_topic_papers
 
 
 class _FakeTopicModel:
@@ -79,3 +83,38 @@ def test_get_topic_papers_and_outliers_return_expected_rows():
 
     assert [paper["paper_id"] for paper in topic_zero] == ["p3", "p1"]
     assert [paper["paper_id"] for paper in outliers] == ["p4"]
+
+
+def test_topics_ensure_numba_cache_dir_sets_writable_default(monkeypatch):
+    monkeypatch.delenv("NUMBA_CACHE_DIR", raising=False)
+
+    from scholaraio.services.topics import _ensure_numba_cache_dir
+
+    cache_dir = _ensure_numba_cache_dir()
+
+    assert os.environ["NUMBA_CACHE_DIR"] == str(cache_dir)
+    assert cache_dir.name == "scholaraio-numba-cache"
+    assert cache_dir.exists()
+
+
+def test_topics_make_bertopic_embedder_returns_supported_backend(tmp_path, monkeypatch):
+    monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path / "numba-cache"))
+
+    class FakeBaseEmbedder:
+        pass
+
+    bertopic_mod = types.ModuleType("bertopic")
+    backend_mod = types.ModuleType("bertopic.backend")
+    base_mod = types.ModuleType("bertopic.backend._base")
+    base_mod.BaseEmbedder = FakeBaseEmbedder
+    backend_mod._base = base_mod
+    bertopic_mod.backend = backend_mod
+    monkeypatch.setitem(sys.modules, "bertopic", bertopic_mod)
+    monkeypatch.setitem(sys.modules, "bertopic.backend", backend_mod)
+    monkeypatch.setitem(sys.modules, "bertopic.backend._base", base_mod)
+
+    from scholaraio.services.topics import _make_bertopic_embedder
+
+    embedder = _make_bertopic_embedder(None)
+
+    assert isinstance(embedder, FakeBaseEmbedder)

@@ -1,10 +1,6 @@
 ---
 name: index
-description: Rebuild FTS5 full-text search index or FAISS semantic vector index. Use when the user wants to update or rebuild search indexes after metadata changes.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["academic", "search", "indexing", "fts5"]
+description: Use when the user wants to rebuild or refresh ScholarAIO keyword, full-text, FTS5, FAISS, or semantic search indexes after data or metadata changes.
 ---
 # 重建索引
 

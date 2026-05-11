@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scholaraio.citation_check import check_citations, extract_citations
-from scholaraio.index import build_index
+from scholaraio.services.citation_check import check_citations, extract_citations
+from scholaraio.services.index import build_index
 
 
 def _write_paper(

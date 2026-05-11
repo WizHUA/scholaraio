@@ -1,4 +1,4 @@
-"""Tests for scholaraio.metrics — MetricsStore, timer, timed."""
+"""Tests for scholaraio.services.metrics — MetricsStore, timer, timed."""
 
 from __future__ import annotations
 
@@ -7,10 +7,12 @@ import time
 
 import pytest
 
-from scholaraio.metrics import (
+from scholaraio.core.config import LLMConfig
+from scholaraio.services.metrics import (
     LLMResult,
     MetricsStore,
     TimerResult,
+    call_llm,
     get_store,
     init,
     reset,
@@ -196,3 +198,76 @@ class TestTimed:
         another_func()
         events = get_store().query(category="step")
         assert "another_func" in events[0]["name"]
+
+
+class TestCallLLM:
+    def test_openai_compat_uses_v1_chat_completions_by_default(self, monkeypatch):
+        called: dict[str, object] = {}
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [{"message": {"content": '{"ok": true}'}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+                    "model": "test-model",
+                }
+
+        def fake_post(url, json, headers, timeout):
+            called["url"] = url
+            called["json"] = json
+            called["headers"] = headers
+            called["timeout"] = timeout
+            return FakeResponse()
+
+        monkeypatch.setattr("scholaraio.services.metrics.requests.post", fake_post)
+
+        llm_cfg = LLMConfig(
+            backend="openai-compat",
+            model="test-model",
+            base_url="https://api.deepseek.com",
+            api_key="secret",
+        )
+        result = call_llm("hello", llm_cfg, json_mode=True)
+
+        assert called["url"] == "https://api.deepseek.com/v1/chat/completions"
+        assert called["json"]["response_format"] == {"type": "json_object"}
+        assert result.content == '{"ok": true}'
+        assert result.tokens_total == 3
+
+    def test_openai_compat_uses_zhipu_v4_chat_completions(self, monkeypatch):
+        called: dict[str, object] = {}
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [{"message": {"content": '{"ok": true}'}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+                    "model": "glm-4.5-flash",
+                }
+
+        def fake_post(url, json, headers, timeout):
+            called["url"] = url
+            called["json"] = json
+            called["headers"] = headers
+            called["timeout"] = timeout
+            return FakeResponse()
+
+        monkeypatch.setattr("scholaraio.services.metrics.requests.post", fake_post)
+
+        llm_cfg = LLMConfig(
+            backend="openai-compat",
+            model="glm-4.5-flash",
+            base_url="https://open.bigmodel.cn/api/paas",
+            api_key="secret",
+        )
+        result = call_llm("hello", llm_cfg, json_mode=True)
+
+        assert called["url"] == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+        assert result.content == '{"ok": true}'
+        assert result.model == "glm-4.5-flash"

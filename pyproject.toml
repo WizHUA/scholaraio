@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scholaraio"
-version = "1.3.0"
+version = "1.4.0"
 description = "Scholar All-In-One — A research infrastructure for AI agents"
 readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.10"
@@ -123,8 +123,6 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Optional-import heavy modules: BERTopic/numpy imported at runtime
-"scholaraio/topics.py" = ["F821"]
 # Existing modules: suppress style nits that don't affect correctness
 "scholaraio/*.py" = ["SIM105", "SIM102", "SIM115", "E402", "F841", "RUF059", "B904"]
 "scholaraio/**/*.py" = ["SIM105", "SIM102", "SIM115", "E402", "F841", "RUF059", "B904"]
@@ -151,12 +149,13 @@ check_untyped_defs = true
 # Lenient for modules with heavy optional imports and dynamic typing
 [[tool.mypy.overrides]]
 module = [
-    "scholaraio.topics",
-    "scholaraio.vectors",
+    "scholaraio.services.topics",
+    "scholaraio.services.vectors",
     "scholaraio.cli",
 
-    "scholaraio.explore",
-    "scholaraio.ingest.*",
+    "scholaraio.stores.explore",
+    "scholaraio.services.ingest.*",
+    "scholaraio.services.ingest_metadata.*",
 ]
 ignore_errors = true
 

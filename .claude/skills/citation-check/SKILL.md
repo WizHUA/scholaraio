@@ -1,10 +1,6 @@
 ---
 name: citation-check
-description: Verify citations in AI-generated or human-written text against the local knowledge base. Catches hallucinated references, wrong metadata, and missing papers. Use when the user wants to check if citations are real and accurate.
-version: 1.1.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["academic", "citations", "verification", "hallucination"]
+description: Use when the user wants to verify citations in AI-generated or human-written text against the local knowledge base and catch hallucinated, wrong, or missing references.
 ---
 # 引用验证
 
@@ -47,8 +43,8 @@ CLI 完成初步筛查后，对问题引用执行更细致的检查：
 ### Layer 1 — 本地库匹配
 
 ```bash
-scholaraio search-author "<Author>" --top 5
-scholaraio usearch "<关键词 from title>" --top 5
+scholaraio search-author "<Author>" --limit 5
+scholaraio usearch "<关键词 from title>" --limit 5
 ```
 在本地库中找到匹配论文后，核对：作者名、年份、标题、期刊是否一致。
 

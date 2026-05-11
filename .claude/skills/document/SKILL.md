@@ -1,10 +1,6 @@
 ---
 name: document
-description: Generate and inspect Office documents (DOCX, PPTX, XLSX). Generate by writing Python scripts that call python-docx, python-pptx, and openpyxl APIs directly. Inspect with `scholaraio document inspect` to verify layout, content, and catch issues (overflow, missing elements). Use when the user wants to create Word reports, PowerPoint presentations, Excel data sheets, or inspect any Office document.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["document", "docx", "pptx", "xlsx", "office", "report"]
+description: Use when the user wants to create or inspect DOCX, PPTX, or XLSX files, generate Office deliverables, or verify layout and content with scholaraio document inspect.
 ---
 
 # Office 文档生成与检查
@@ -17,7 +13,7 @@ tags: ["document", "docx", "pptx", "xlsx", "office", "report"]
 
 **检查**：生成后必须用 `scholaraio document inspect <file>` 检查文档，确认布局、内容、图片尺寸无误，再交付给用户。
 
-输出目录：`workspace/` 下（如 `workspace/reports/`、`workspace/figures/`）。
+输出目录：`workspace/` 下；用户报告可放 `workspace/reports/`，系统生成图表默认放 `workspace/_system/figures/`。
 
 ## 文档检查（inspect）
 
@@ -127,7 +123,7 @@ p2.add_run("湍流调制效应在高 Stokes 数条件下显著增强。")
 doc.add_page_break()
 
 # ── 嵌入图片（来自 draw skill 输出）──
-img = Path("workspace/figures/pipeline.png")
+img = Path("workspace/_system/figures/pipeline.png")
 if img.exists():
     doc.add_picture(str(img), width=Inches(5))
     # 图片标题
@@ -275,7 +271,7 @@ for i, h in enumerate(["论文", "年份", "期刊", "引用量"]):
     table.cell(0, i).text = h
 
 # 图片（来自 draw skill）
-img = Path("workspace/figures/pipeline.png")
+img = Path("workspace/_system/figures/pipeline.png")
 if img.exists():
     slide.shapes.add_picture(str(img), Inches(1), Inches(4), width=Inches(8))
 
@@ -420,7 +416,7 @@ ws.add_chart(chart, "G2")
    - `scholaraio topics --topic N` — 主题论文
    - `scholaraio ws show <name>` — 工作区论文列表
 
-3. **生成图表**（如需要）：用 draw skill 生成 PNG/SVG 到 `workspace/figures/`
+3. **生成图表**（如需要）：用 draw skill 生成 PNG/SVG 到 `workspace/_system/figures/`
 
 4. **编写 Python 脚本**：用上述 API 直接构建文档，在一个脚本中完成全部操作
 
@@ -457,7 +453,7 @@ scholaraio export docx --input file.md --output file.docx
 → 调用 `ws show phd-thesis` 获取论文列表 → 按主题分组 → 写 python-pptx 脚本生成幻灯片
 
 用户说："导出所有论文的统计数据到 Excel"
-→ 遍历 `data/papers/*/meta.json` 提取字段 → 写 openpyxl 脚本生成带筛选和图表的 XLSX
+→ 遍历 configured papers library 下的 `*/meta.json` 提取字段 → 写 openpyxl 脚本生成带筛选和图表的 XLSX
 
 用户说："画一个流程图然后嵌入到报告里"
 → 先用 draw skill 生成 PNG → 再用 python-docx 的 `add_picture()` 嵌入 DOCX

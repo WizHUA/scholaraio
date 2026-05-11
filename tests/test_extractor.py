@@ -1,9 +1,9 @@
-"""Tests for scholaraio.ingest.extractor — factory and metadata extractors."""
+"""Tests for scholaraio.services.ingest_metadata.extractor — factory and metadata extractors."""
 
 from __future__ import annotations
 
-from scholaraio.config import _build_config
-from scholaraio.ingest.extractor import (
+from scholaraio.core.config import _build_config
+from scholaraio.services.ingest_metadata.extractor import (
     LLMExtractor,
     RegexExtractor,
     RobustExtractor,
@@ -49,6 +49,19 @@ class TestRegexExtractor:
         meta = ext.extract(md)
         assert meta.title == "Test Paper Title"
         assert meta.doi == "10.1234/test.2023"
+
+    def test_falls_back_to_patent_publication_number_in_filename(self, tmp_path):
+        md = tmp_path / "US20260106892A1.md"
+        md.write_text(
+            "# Patent Application Publication\n\n(10) Pub. No.:\n\n(43) Pub. Date:\n",
+            encoding="utf-8",
+        )
+
+        ext = RegexExtractor()
+        meta = ext.extract(md)
+
+        assert meta.publication_number == "US20260106892A1"
+        assert meta.paper_type == "patent"
 
 
 class TestLLMExtractor:

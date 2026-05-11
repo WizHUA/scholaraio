@@ -1,10 +1,6 @@
 ---
 name: writing-polish
-description: Polish academic writing — remove AI-generated patterns, improve clarity, and match a target style. Supports both English and Chinese. Use when the user wants to refine prose, remove AI artifacts, or adapt writing to a specific journal style.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["academic", "writing", "polish", "style"]
+description: Use when the user wants to polish academic prose, remove AI-generated patterns, improve clarity, or adapt English or Chinese writing to a target style or journal.
 ---
 # 学术写作润色
 

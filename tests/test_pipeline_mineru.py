@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
-from scholaraio.config import Config
-from scholaraio.ingest.mineru import ConvertResult, PDFValidationResult
-from scholaraio.ingest.pipeline import InboxCtx, StepResult, _process_inbox, batch_convert_pdfs, step_mineru
+from scholaraio.core.config import Config
+from scholaraio.providers.mineru import ConvertResult, PDFValidationResult
+from scholaraio.services.ingest.pipeline import InboxCtx, StepResult, _process_inbox, batch_convert_pdfs, step_mineru
+from scholaraio.services.ingest_metadata._models import PaperMetadata
 
 
 def _allow_pdf_validation(monkeypatch):
-    import scholaraio.ingest.mineru as mineru
+    import scholaraio.providers.mineru as mineru
 
     monkeypatch.setattr(
         mineru,
@@ -31,8 +33,8 @@ def test_cloud_batch_uses_safe_asset_directory_for_long_pdf_name(tmp_path, monke
     cfg.paths.papers_dir = "papers"
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "token")
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pipeline as pipeline
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.services.ingest.pipeline as pipeline
 
     monkeypatch.setattr(mineru, "check_server", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(mineru, "_plan_cloud_chunking", lambda *_args, **_kwargs: (False, 600, ""))
@@ -71,8 +73,8 @@ def test_cloud_batch_uses_safe_asset_directory_for_long_pdf_name(tmp_path, monke
 
 
 def test_move_assets_normalizes_safe_stem_json_artifacts(tmp_path):
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pipeline as pipeline
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.services.ingest.pipeline as pipeline
 
     inbox = tmp_path / "inbox"
     inbox.mkdir()
@@ -92,6 +94,89 @@ def test_move_assets_normalizes_safe_stem_json_artifacts(tmp_path):
     assert not any(path.name.startswith(safe_stem) for path in dest.iterdir())
 
 
+def test_move_assets_moves_generic_image_dir_and_rewrites_markdown_refs(tmp_path):
+    import scholaraio.services.ingest.pipeline as pipeline
+
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    dest = tmp_path / "paper"
+    dest.mkdir()
+    images = inbox / "paper_images"
+    images.mkdir()
+    (images / "fig.png").write_bytes(b"png")
+    paper_md = dest / "paper.md"
+    paper_md.write_text("![fig](paper_images/fig.png)\n", encoding="utf-8")
+
+    pipeline._move_assets(inbox, dest, "paper", "paper")
+
+    assert (dest / "images" / "fig.png").read_bytes() == b"png"
+    assert paper_md.read_text(encoding="utf-8") == "![fig](images/fig.png)\n"
+
+
+def test_process_inbox_local_mineru_images_reach_paper_directory(tmp_path, monkeypatch):
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    papers = tmp_path / "papers"
+    pending = tmp_path / "pending"
+    pdf = inbox / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    image_bytes = b"fake-png"
+
+    cfg = Config()
+    cfg._root = tmp_path
+
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.services.ingest.pipeline as pipeline
+
+    _allow_pdf_validation(monkeypatch)
+    monkeypatch.setattr(mineru, "check_server", lambda *_args, **_kwargs: True)
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {
+                "results": {
+                    pdf.stem: {
+                        "md_content": "![fig](images/fig.png)\n",
+                        "images": {"fig.png": "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")},
+                    }
+                }
+            }
+
+    monkeypatch.setattr(mineru.requests, "post", lambda *_args, **_kwargs: FakeResponse())
+
+    def fake_extract(ctx):
+        ctx.meta = PaperMetadata(
+            title="Local MinerU Images",
+            first_author_lastname="Zhang",
+            year=2026,
+            doi="10.1000/local-images",
+        )
+        return StepResult.OK
+
+    monkeypatch.setattr(pipeline.STEPS["extract"], "fn", fake_extract)
+
+    _process_inbox(
+        inbox,
+        papers,
+        pending,
+        {},
+        ["mineru", "extract", "ingest"],
+        cfg,
+        {"no_api": True},
+        False,
+        [],
+    )
+
+    paper_dirs = list(papers.iterdir())
+    assert len(paper_dirs) == 1
+    paper_dir = paper_dirs[0]
+    assert (paper_dir / "paper.md").read_text(encoding="utf-8") == "![fig](images/fig.png)\n"
+    assert (paper_dir / "images" / "fig.png").read_bytes() == image_bytes
+
+
 def test_step_mineru_falls_back_without_cloud_key(tmp_path, monkeypatch):
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4\n")
@@ -108,8 +193,8 @@ def test_step_mineru_falls_back_without_cloud_key(tmp_path, monkeypatch):
         opts={},
     )
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pdf_fallback as pdf_fallback
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.providers.pdf_fallback as pdf_fallback
 
     _allow_pdf_validation(monkeypatch)
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)
@@ -153,8 +238,8 @@ def test_step_mineru_skips_page_count_when_mineru_unreachable_and_no_cloud_key(t
         opts={},
     )
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pdf_fallback as pdf_fallback
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.providers.pdf_fallback as pdf_fallback
 
     _allow_pdf_validation(monkeypatch)
 
@@ -192,9 +277,9 @@ def test_batch_convert_pdfs_falls_back_without_cloud_key(tmp_path, monkeypatch):
     cfg.paths.papers_dir = "papers"
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "")
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pdf_fallback as pdf_fallback
-    import scholaraio.ingest.pipeline as pipeline
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.providers.pdf_fallback as pdf_fallback
+    import scholaraio.services.ingest.pipeline as pipeline
 
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)
     monkeypatch.setattr(pipeline, "_batch_postprocess", lambda *_args, **_kwargs: None)
@@ -227,9 +312,9 @@ def test_batch_convert_pdfs_fallback_cleans_noncanonical_source_pdf(tmp_path, mo
     cfg.paths.papers_dir = "papers"
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "")
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pdf_fallback as pdf_fallback
-    import scholaraio.ingest.pipeline as pipeline
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.providers.pdf_fallback as pdf_fallback
+    import scholaraio.services.ingest.pipeline as pipeline
 
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)
     monkeypatch.setattr(pipeline, "_batch_postprocess", lambda *_args, **_kwargs: None)
@@ -263,8 +348,8 @@ def test_batch_convert_pdfs_cloud_splits_items_that_exceed_new_limits(tmp_path, 
     cfg.paths.papers_dir = "papers"
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "token")
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pipeline as pipeline
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.services.ingest.pipeline as pipeline
 
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)
     monkeypatch.setattr(pipeline, "_batch_postprocess", lambda *_args, **_kwargs: None)
@@ -302,9 +387,9 @@ def test_batch_convert_pdfs_cloud_split_importerror_falls_back(tmp_path, monkeyp
     cfg.paths.papers_dir = "papers"
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "token")
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pdf_fallback as pdf_fallback
-    import scholaraio.ingest.pipeline as pipeline
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.providers.pdf_fallback as pdf_fallback
+    import scholaraio.services.ingest.pipeline as pipeline
 
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)
     monkeypatch.setattr(pipeline, "_batch_postprocess", lambda *_args, **_kwargs: None)
@@ -346,8 +431,8 @@ def test_batch_convert_pdfs_cloud_batch_success_counts_each_result(tmp_path, mon
     cfg.paths.papers_dir = "papers"
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "token")
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pipeline as pipeline
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.services.ingest.pipeline as pipeline
 
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)
     monkeypatch.setattr(pipeline, "_batch_postprocess", lambda *_args, **_kwargs: None)
@@ -377,9 +462,9 @@ def test_batch_convert_pdfs_cloud_batch_missing_md_falls_back(tmp_path, monkeypa
     cfg.paths.papers_dir = "papers"
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "token")
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pdf_fallback as pdf_fallback
-    import scholaraio.ingest.pipeline as pipeline
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.providers.pdf_fallback as pdf_fallback
+    import scholaraio.services.ingest.pipeline as pipeline
 
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)
     monkeypatch.setattr(pipeline, "_batch_postprocess", lambda *_args, **_kwargs: None)
@@ -424,8 +509,8 @@ def test_batch_convert_pdfs_cloud_batch_moves_markdown_relative_images(tmp_path,
     cfg.paths.papers_dir = "papers"
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "token")
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pipeline as pipeline
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.services.ingest.pipeline as pipeline
 
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)
     monkeypatch.setattr(pipeline, "_batch_postprocess", lambda *_args, **_kwargs: None)
@@ -466,8 +551,8 @@ def test_batch_convert_pdfs_cloud_batch_does_not_skip_duplicate_source_stems(tmp
     cfg.paths.papers_dir = "papers"
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "token")
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pipeline as pipeline
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.services.ingest.pipeline as pipeline
 
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)
     monkeypatch.setattr(pipeline, "_batch_postprocess", lambda *_args, **_kwargs: None)
@@ -501,8 +586,8 @@ def test_process_inbox_cloud_batch_preserves_nested_markdown_result(tmp_path, mo
     cfg._root = tmp_path
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "token")
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pipeline as pipeline
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.services.ingest.pipeline as pipeline
 
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)
     monkeypatch.setattr(mineru, "_plan_cloud_chunking", lambda *_args, **_kwargs: (False, 600, ""))
@@ -556,8 +641,8 @@ def test_process_inbox_cloud_batch_normalizes_nested_images_for_ingest_assets(tm
     cfg._root = tmp_path
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "token")
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pipeline as pipeline
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.services.ingest.pipeline as pipeline
 
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)
     monkeypatch.setattr(mineru, "_plan_cloud_chunking", lambda *_args, **_kwargs: (False, 600, ""))
@@ -611,7 +696,7 @@ def test_process_inbox_cloud_batch_keeps_images_for_mineru_only(tmp_path, monkey
     cfg._root = tmp_path
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "token")
 
-    import scholaraio.ingest.mineru as mineru
+    import scholaraio.providers.mineru as mineru
 
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)
     monkeypatch.setattr(mineru, "_plan_cloud_chunking", lambda *_args, **_kwargs: (False, 600, ""))
@@ -658,8 +743,8 @@ def test_process_inbox_cloud_batch_failure_retries_mineru_per_file(tmp_path, mon
     cfg._root = tmp_path
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "token")
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pipeline as pipeline
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.services.ingest.pipeline as pipeline
 
     mineru_calls: list[Path] = []
     extract_seen: dict[str, Path | None] = {}
@@ -719,8 +804,8 @@ def test_process_inbox_skips_cloud_batch_when_fallback_parser_is_preferred(tmp_p
     cfg.ingest.pdf_preferred_parser = "docling"
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "token")
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pipeline as pipeline
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.services.ingest.pipeline as pipeline
 
     extract_seen: dict[str, Path | None] = {}
     original_mineru = pipeline.STEPS["mineru"].fn
@@ -783,8 +868,8 @@ def test_step_mineru_prefers_docling_when_configured(tmp_path, monkeypatch):
         opts={},
     )
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pdf_fallback as pdf_fallback
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.providers.pdf_fallback as pdf_fallback
 
     _allow_pdf_validation(monkeypatch)
     mineru_calls: list[Path] = []
@@ -835,8 +920,8 @@ def test_step_mineru_skips_page_count_when_preferred_parser_bypasses_mineru(tmp_
         opts={},
     )
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pdf_fallback as pdf_fallback
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.providers.pdf_fallback as pdf_fallback
 
     _allow_pdf_validation(monkeypatch)
 
@@ -878,8 +963,8 @@ def test_step_mineru_preferred_fallback_does_not_run_mineru_validation(tmp_path,
         opts={},
     )
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pdf_fallback as pdf_fallback
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.providers.pdf_fallback as pdf_fallback
 
     monkeypatch.setattr(
         mineru,
@@ -924,8 +1009,8 @@ def test_step_mineru_rejects_invalid_pdf_without_fallback(tmp_path, monkeypatch)
         opts={},
     )
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pdf_fallback as pdf_fallback
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.providers.pdf_fallback as pdf_fallback
 
     monkeypatch.setattr(mineru, "check_server", lambda *_: True)
     monkeypatch.setattr(
@@ -957,7 +1042,7 @@ def test_step_mineru_cloud_does_not_split_pdf_below_new_cloud_limits(tmp_path, m
         opts={},
     )
 
-    import scholaraio.ingest.mineru as mineru
+    import scholaraio.providers.mineru as mineru
 
     _allow_pdf_validation(monkeypatch)
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)
@@ -997,7 +1082,7 @@ def test_step_mineru_cloud_splits_when_new_cloud_limits_require_it(tmp_path, mon
         opts={},
     )
 
-    import scholaraio.ingest.mineru as mineru
+    import scholaraio.providers.mineru as mineru
 
     _allow_pdf_validation(monkeypatch)
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)
@@ -1039,8 +1124,8 @@ def test_step_mineru_cloud_split_importerror_falls_back(tmp_path, monkeypatch):
         opts={},
     )
 
-    import scholaraio.ingest.mineru as mineru
-    import scholaraio.ingest.pdf_fallback as pdf_fallback
+    import scholaraio.providers.mineru as mineru
+    import scholaraio.providers.pdf_fallback as pdf_fallback
 
     _allow_pdf_validation(monkeypatch)
     monkeypatch.setattr(mineru, "check_server", lambda *_: False)

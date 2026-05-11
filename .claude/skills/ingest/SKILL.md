@@ -1,10 +1,6 @@
 ---
 name: ingest
-description: Use when the user wants to process new papers, patents, theses, documents, or proceedings from inbox into the knowledge base, run the ingest pipeline, or rebuild indexes.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["academic", "papers", "patent", "pipeline", "pdf", "docx", "office"]
+description: Use when the user wants to process new papers, patents, theses, documents, or proceedings from inbox queues into the knowledge base, run the ingest pipeline, or rebuild indexes.
 ---
 # 入库文档
 
@@ -14,10 +10,10 @@ tags: ["academic", "papers", "patent", "pipeline", "pdf", "docx", "office"]
 
 | 格式 | 放入目录 | 处理方式 |
 |------|----------|----------|
-| `.pdf` | `data/inbox/` 或 `data/inbox-doc/` | MinerU 转 Markdown |
-| `.pdf` / `.md` | `data/inbox-patent/` | 专利文献（按公开号去重） |
-| `.pdf` / `.md` | `data/inbox-proceedings/` | 论文集准备流程（先生成 `proceeding.md` + `split_candidates.json`） |
-| `.docx` `.xlsx` `.pptx` | `data/inbox-doc/` | MarkItDown 转 Markdown |
+| `.pdf` | `data/spool/inbox/` 或 `data/spool/inbox-doc/` | MinerU 转 Markdown |
+| `.pdf` / `.md` | `data/spool/inbox-patent/` | 专利文献（按公开号去重） |
+| `.pdf` / `.md` | `data/spool/inbox-proceedings/` | 论文集准备流程（先生成 `proceeding.md` + `split_candidates.json`） |
+| `.docx` `.xlsx` `.pptx` | `data/spool/inbox-doc/` | MarkItDown 转 Markdown |
 | `.md` | 任意 inbox | 直接入库（跳过转换） |
 
 ## 执行逻辑
@@ -47,11 +43,13 @@ scholaraio pipeline <preset> [--dry-run] [--no-api] [--force] [--inspect]
 - `--list` — 列出所有可用步骤和预设
 
 3. pipeline 当前会依次处理五个 inbox 目录：
-   - `data/inbox/` — 普通论文（有 DOI 才入库，无 DOI 且非 thesis 转 pending）
-   - `data/inbox-thesis/` — 学位论文（跳过 DOI 去重，自动标记 thesis）
-   - `data/inbox-patent/` — 专利文献（按公开号去重，自动标记 patent，跳过 DOI 去重）
-   - `data/inbox-doc/` — 非论文文档（技术报告、讲义、Word/Excel/PPT、标准文档等，跳过 DOI 去重，LLM 生成标题/摘要）
-   - `data/inbox-proceedings/` — 论文集（强制按 proceedings 处理；普通 `data/inbox/` 不再自动识别）
+   - `data/spool/inbox/` — 普通论文（有 DOI 才入库，无 DOI 且非 thesis 转 pending）
+   - `data/spool/inbox-thesis/` — 学位论文（跳过 DOI 去重，自动标记 thesis）
+   - `data/spool/inbox-patent/` — 专利文献（按公开号去重，自动标记 patent，跳过 DOI 去重）
+   - `data/spool/inbox-doc/` — 非论文文档（技术报告、讲义、Word/Excel/PPT、标准文档等，跳过 DOI 去重，LLM 生成标题/摘要）
+   - `data/spool/inbox-proceedings/` — 论文集（强制按 proceedings 处理；普通 `data/spool/inbox/` 不会当作 proceedings）
+
+   旧版 `data/inbox*` 与 `data/pending/` 是迁移输入，不是当前正常 runtime 输入。先运行 `scholaraio migrate upgrade --migration-id <id> --confirm`，再执行入库流程。
 
 4. 论文类的 Stage-1 元数据提取由 `ingest.extractor` 控制：
    - `regex`：纯正则，最快，不调用 LLM
@@ -61,7 +59,7 @@ scholaraio pipeline <preset> [--dry-run] [--no-api] [--force] [--inspect]
    - 如果用户问“为什么标题 / 作者 / DOI 提取不准”，先检查这里的模式配置
 
 5. 论文集（proceedings）采用半自动两阶段流程：
-   - 第一阶段：`scholaraio pipeline ingest` 只负责把 PDF/MD 转成 `data/proceedings/<Volume>/proceeding.md`，并生成 `split_candidates.json`
+   - 第一阶段：`scholaraio pipeline ingest` 只负责把 PDF/MD 转成 configured proceedings library（fresh 默认 `data/libraries/proceedings/<Volume>/proceeding.md`），并生成 `split_candidates.json`
    - 此时不会自动拆成子论文；CLI 会显式提示等待 agent 审阅 `split_candidates.json` 并生成 `split_plan.json`
    - 第二阶段：由 agent/人工审阅结构后，执行
 
@@ -69,7 +67,7 @@ scholaraio pipeline <preset> [--dry-run] [--no-api] [--force] [--inspect]
 scholaraio proceedings apply-split <proceeding_dir> <split_plan.json>
 ```
 
-   - 这一步才会真正把子论文落到 `data/proceedings/<Volume>/papers/<Paper>/`
+   - 这一步才会真正把子论文落到 configured proceedings library 的 `<Volume>/papers/<Paper>/`
 
 6. proceedings 拆分后支持半自动清洗流程：
    - 先执行
@@ -91,23 +89,23 @@ scholaraio proceedings apply-clean <proceeding_dir> <clean_plan.json>
    - 这里的“删除标签”只针对明显错误的独立 heading/tag 行，不改正文段落内容
    - 推荐先做结构性清洗（保留/重命名/重分类/删除），再考虑作者、摘要、DOI 等元数据提纯
 
-7. Office 文件处理流程（`data/inbox-doc/` 中的 DOCX/XLSX/PPTX）：
+7. Office 文件处理流程（`data/spool/inbox-doc/` 中的 DOCX/XLSX/PPTX）：
    - `step_office_convert`（MarkItDown）→ 转换为 `<stem>.md`
    - `step_extract_doc`（LLM 生成标题/摘要）
-   - `step_ingest`（写入 `data/papers/`）
+   - `step_ingest`（写入 configured papers library，fresh 默认 `data/libraries/papers/`）
    - **依赖**：需安装 `pip install 'markitdown[docx,pptx,xlsx]'`
 
-8. 专利文献处理逻辑（`data/inbox-patent/`）：
+8. 专利文献处理逻辑（`data/spool/inbox-patent/`）：
    - 自动提取公开号（CN/US/EP/WO/JP/KR/DE/FR/GB/TW/IN/AU 等格式）
    - 按公开号去重（非 DOI），跳过 DOI 检查
    - 自动标记 `paper_type: patent`
 
 9. 无 DOI 论文的处理逻辑：
-   - 来自 `data/inbox-thesis/` → 直接标记为 thesis 并入库
-   - 来自 `data/inbox-doc/` → 标记为 document 类型，LLM 生成标题和摘要后入库
-   - 来自 `data/inbox/` → LLM 分析判断是否 thesis
+   - 来自 `data/spool/inbox-thesis/` → 直接标记为 thesis 并入库
+   - 来自 `data/spool/inbox-doc/` → 标记为 document 类型，LLM 生成标题和摘要后入库
+   - 来自 `data/spool/inbox/` → LLM 分析判断是否 thesis
      - 是 thesis → 标记并入库
-     - 不是 thesis → 转入 `data/pending/` 待人工确认
+     - 不是 thesis → 转入 `data/spool/pending/` 待人工确认
 
 10. 超长 PDF 会在 MinerU 转换前按需自动切分后合并：
    - 本地 MinerU 按 `chunk_page_limit`（默认 >100 页）
@@ -122,6 +120,9 @@ scholaraio proceedings apply-clean <proceeding_dir> <clean_plan.json>
 
 用户说："我放了几篇新论文到 inbox，帮我入库"
 → 执行 `pipeline ingest`
+
+用户说："把这个网页/在线 PDF 直接收进库里"
+→ 不要先让用户手动放 inbox，优先使用 `scholaraio ingest-link <url>`（它会通过 `qt-web-extractor` 抓取渲染后的网页内容或在线 PDF）
 
 用户说："把新论文全部处理完，包括提取目录和结论"
 → 执行 `pipeline full`

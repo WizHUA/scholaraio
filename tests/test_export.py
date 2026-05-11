@@ -6,7 +6,7 @@ Does NOT test: internal helper functions, exact string formatting.
 
 from __future__ import annotations
 
-from scholaraio.export import export_bibtex, meta_to_bibtex
+from scholaraio.services.export import export_bibtex, meta_to_bibtex
 
 
 class TestMetaToBibtex:

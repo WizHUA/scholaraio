@@ -1,10 +1,11 @@
-"""Tests for scholaraio.citation_styles — APA, Vancouver, Chicago, MLA formatting."""
+"""Tests for scholaraio.stores.citation_styles — APA, Vancouver, Chicago, MLA formatting."""
 
 from __future__ import annotations
 
 import pytest
 
-from scholaraio.citation_styles import (
+from scholaraio.core.config import _build_config
+from scholaraio.stores.citation_styles import (
     BUILTIN_STYLES,
     _fmt_apa,
     _fmt_chicago_author_date,
@@ -15,7 +16,6 @@ from scholaraio.citation_styles import (
     show_style,
     styles_dir,
 )
-from scholaraio.config import _build_config
 
 
 @pytest.fixture()
@@ -218,7 +218,7 @@ class TestGetFormatter:
         assert f({}, 1) == "1. custom"
 
     def test_invalid_name_chars(self, cfg):
-        with pytest.raises(ValueError, match="无效"):
+        with pytest.raises(ValueError, match="Invalid citation style name"):
             get_formatter("../hack", cfg)
 
     def test_nonexistent_style(self, cfg):
@@ -236,7 +236,7 @@ class TestGetFormatter:
 class TestShowStyle:
     def test_builtin_returns_comment(self, cfg):
         result = show_style("apa", cfg)
-        assert "内置格式" in result
+        assert "Built-in style" in result
         assert "apa" in result
 
     def test_custom_returns_source(self, cfg):

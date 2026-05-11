@@ -1,10 +1,6 @@
 ---
 name: citations
-description: View top-cited papers ranking and refetch citation counts from APIs. Use when the user asks about highly cited papers, citation rankings, or wants to update citation data.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["academic", "citations", "bibliometrics", "impact"]
+description: Use when the user asks about highly cited papers, citation rankings, or updating citation counts from external APIs.
 ---
 # 引用量查询
 
@@ -15,7 +11,7 @@ tags: ["academic", "citations", "bibliometrics", "impact"]
 ### 查看高引论文排行
 
 ```bash
-scholaraio top-cited [--top N] [--year RANGE] [--journal NAME] [--type TYPE]
+scholaraio top-cited [--limit N] [--year RANGE] [--journal NAME] [--type TYPE]
 ```
 
 ### 补查引用量
@@ -37,7 +33,7 @@ scholaraio refetch "<paper-id>"
 ## 示例
 
 用户说："哪些论文引用最多"
-→ 执行 `top-cited --top 20`
+→ 执行 `top-cited --limit 20`
 
 用户说："看看流体力学期刊的高引论文"
 → 执行 `top-cited --journal "Fluid Mech"`

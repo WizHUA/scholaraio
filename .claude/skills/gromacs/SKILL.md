@@ -1,6 +1,6 @@
 ---
 name: gromacs
-description: Use when working on biomolecular molecular dynamics with GROMACS, especially system setup, equilibration, production runs, trajectory analysis, or MM/PBSA-style post-processing.
+description: Use when working on biomolecular molecular dynamics with GROMACS, including system setup, equilibration, production runs, trajectory analysis, or MM/PBSA-style post-processing.
 ---
 
 # GROMACS 分子动力学

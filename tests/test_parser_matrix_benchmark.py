@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from scholaraio.config import Config
-from scholaraio.ingest import parser_matrix_benchmark as bench
+from scholaraio.core.config import Config
+from scholaraio.services.ingest import parser_matrix_benchmark as bench
 
 
 def test_slugify_value_handles_common_types():

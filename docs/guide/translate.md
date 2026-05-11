@@ -45,13 +45,13 @@ scholaraio translate "<paper-id>" --lang zh --portable
 This keeps the normal in-place translation:
 
 ```text
-data/papers/<Author-Year-Title>/paper_zh.md
+data/libraries/papers/<Author-Year-Title>/paper_zh.md
 ```
 
 And also creates a portable bundle:
 
 ```text
-workspace/translation-ws/<Author-Year-Title>/
+workspace/_system/translation-bundles/<Author-Year-Title>/
 ├── paper_zh.md
 └── images/
 ```

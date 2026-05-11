@@ -1,10 +1,6 @@
 ---
 name: import
-description: Import papers from external reference managers (Endnote XML/RIS, Zotero Web API or local SQLite), or attach a PDF to an existing paper. Handles PDF matching, MinerU conversion, metadata enrichment, and index updates. Use when the user wants to import their existing library from Zotero, Endnote, attach/add a PDF to a paper, or supplement a paper with its PDF.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["academic", "papers", "import", "zotero", "endnote"]
+description: Use when the user wants to import papers from Endnote XML/RIS, Zotero Web API or local SQLite, attach PDFs, match PDFs to records, or supplement records with PDF content.
 ---
 # 导入外部文献管理工具数据 / 补充 PDF
 
@@ -96,11 +92,11 @@ scholaraio attach-pdf <paper-id> <path/to/paper.pdf>
 对已入库但缺少 paper.md 的论文（如首次导入时用了 `--no-convert`），可通过 Python 调用批量转换：
 
 ```python
-from scholaraio.config import load_config
-from scholaraio.ingest.pipeline import batch_convert_pdfs
+from scholaraio.core.config import load_config
+from scholaraio.services.ingest.pipeline import batch_convert_pdfs
 
 cfg = load_config()
 stats = batch_convert_pdfs(cfg, enrich=True)
 ```
 
-自动扫描 `data/papers/` 中有 PDF 无 paper.md 的论文，云端模式使用批量 API 转换，完成后运行 abstract backfill + toc + l3 + embed + index。
+自动扫描 configured papers library 中有 PDF 无 paper.md 的论文，云端模式使用批量 API 转换，完成后运行 abstract backfill + toc + l3 + embed + index。

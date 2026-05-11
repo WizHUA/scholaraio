@@ -47,6 +47,32 @@ scholaraio setup
 
 这样一来，agent 能得到最完整的使用体验：仓库内置指令、本地 skills、CLI 和完整代码上下文都会直接可用。Claude Code 插件、Codex/OpenClaw skills 注册，以及其他使用路径的详细说明，详见 [`docs/getting-started/agent-setup.md`](docs/getting-started/agent-setup.md)。
 
+## 升级到 1.4
+
+ScholarAIO 1.4 是一次 runtime layout 升级。它不会在 `git pull`、
+`pip install -U` 或普通 CLI 启动时自动迁移用户数据。这是有意设计：
+迁移数据必须是一次显式的离线操作，并且会留下 migration journal 和验证记录。
+
+推荐路径：
+
+```bash
+# 1. 更新代码/包
+git pull
+pip install -e ".[full]"
+
+# 2. 在包含 data/、workspace/、config*.yaml 的 ScholarAIO runtime 根目录显式检查并迁移
+scholaraio migrate status
+scholaraio migrate upgrade --migration-id upgrade-1.4.0 --confirm
+scholaraio migrate verify --migration-id upgrade-1.4.0
+
+# 3. 数据进入 fresh layout 后重建索引
+scholaraio index --rebuild
+```
+
+最低风险的做法是先保留或复制旧 ScholarAIO 文件夹，再在升级后的 checkout
+中迁移那份包含 `data/`、`workspace/` 和 `config*.yaml` 的 runtime。
+详细步骤见 [`docs/getting-started/upgrading-to-1.4.md`](docs/getting-started/upgrading-to-1.4.md)。
+
 ## 核心功能
 
 |                               | 功能                           | 说明                                                                                        |
@@ -61,12 +87,28 @@ scholaraio setup
 | **多源导入**                  | 现有文献库可直接接入           | 从现有文献管理工具、PDF 和 Markdown 直接导入，不用从零重建你的文献库                        |
 | **工作区**                    | 按项目整理                     | 论文子集管理，支持限定范围内的检索和 BibTeX 导出                                            |
 | **多格式导出**                | BibTeX / RIS / Markdown / DOCX | 可导出整个文献库或工作区，直接用于 Zotero、Endnote、投稿或分享                              |
+| **元数据清洗**                | enrich 后增量修整              | 对非标准文档产生的低质量标题、作者和年份做审阅式修复，并给已检查条目标记，便于后续增量跳过  |
 | **持久化笔记**                | 跨会话记忆                     | 把每篇论文的分析结论持续保存下来，下一次进入新会话时也能直接复用，不必从头重读              |
 | **研究洞察**                  | 阅读行为分析                   | 搜索热词、高频阅读论文、阅读趋势、语义近邻推荐——帮助你发现可能忽略的文献                    |
 | **联邦发现**                  | 跨库搜索                       | 把主库、探索库和 arXiv 放在同一个搜索入口里，不必在多个工具之间来回切换                     |
+| **远程备份**                  | 基于 rsync 的同步              | 通过命名备份目标把 ScholarAIO 的 `data/` 工作区增量同步到远程机器                           |
 | **AI for Science 运行时能力** | 更准确地使用科学软件           | 在运行时直接对照官方文档使用科学软件，而不是靠猜命令、猜参数                                |
 | **可扩展工具接入**            | 持续接入真正需要的软件         | 随着新的科学工具和工作流变得重要，系统可以继续扩展支持                                      |
-| **学术写作**                  | AI 辅助撰写                    | 文献综述、论文章节、引用验证、审稿回复、研究空白分析——每条引用都可追溯到你自己的文献库      |
+| **学术写作**                  | AI 辅助撰写                    | 以路由为中心的写作工作流：文献综述、论文章节、引用验证、审稿回复、研究空白、海报内容包、技术调研报告——每条引用都可追溯到你自己的文献库      |
+
+针对写作类任务，如果用户已经知道交付物，但还不确定该走哪条 workflow，优先从写作总入口开始。当前写作能力主要包括：
+
+- `academic-writing`：按交付物和写作阶段分流
+- `literature-review`：长文综述与 survey
+- `paper-guided-reading`：从模糊检索到单篇深读的引导式精读
+- `paper-writing`：论文具体章节写作
+- `review-response`：审稿回复与 rebuttal
+- `research-gap`：研究空白分析与开放问题报告
+- `technical-report`：技术调研报告与专题简报
+- `poster`：学术海报内容组织
+- `document`：最终 DOCX / PPTX 打包交付
+
+完整说明见 [`docs/guide/writing.md`](docs/guide/writing.md)。
 
 
 ## 兼容你的 Agent
@@ -78,11 +120,12 @@ ScholarAIO 的设计目标是 **agent 无关**，但不同 agent 的接入方式
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `CLAUDE.md` + `.claude/skills/`   | Claude 插件市场            |
 | [Codex](https://openai.com/codex) / OpenClaw                  | `AGENTS.md` + `.agents/skills/`   | 注册到 `~/.agents/skills/` |
 | [Cline](https://github.com/cline/cline)                       | `.clinerules` + `.claude/skills/` | CLI + skills               |
+| [Qwen](https://qwen.ai/)                                      | `.qwen/QWEN.md` + `.qwen/skills/` | CLI + skills               |
 | [Cursor](https://cursor.sh)                                   | `.cursor/rules/scholaraio.mdc` + `AGENTS.md`（`.cursorrules` 旧版 fallback） | CLI + skills               |
 | [Windsurf](https://codeium.com/windsurf)                      | `.windsurfrules`                  | CLI + skills               |
 | [GitHub Copilot](https://github.com/features/copilot)         | `.github/copilot-instructions.md` | CLI + skills               |
 
-Skills 遵循开放的 [AgentSkills.io](https://agentskills.io) 标准，`.agents/skills/` 是 `.claude/skills/` 的符号链接，方便不同 agent 发现和复用。
+Skills 遵循开放的 [AgentSkills.io](https://agentskills.io) 标准，`.agents/skills/` 与 `.qwen/skills/` 均为 `.claude/skills/` 的符号链接，方便不同 agent 发现和复用。Qwen 的项目上下文文件位于 `.qwen/QWEN.md`。
 
 **从现有工具迁移？** 支持从 Endnote（XML/RIS）和 Zotero（Web API 或本地 SQLite）直接导入——PDF、元数据、引用关系一并迁入。更多导入源持续开发中。
 
@@ -110,15 +153,20 @@ scholaraio/             # Python 包——CLI、所有核心模块
   ingest/               #   PDF 解析 + 元数据提取流水线
   sources/              #   外部来源适配（arXiv / Endnote / Zotero）
 
-.claude/skills/         # agent skills（AgentSkills.io 格式）
+.claude/skills/         # agent skills（canonical source）
 .agents/skills/         # ↑ 符号链接，方便跨 agent 发现
-data/papers/            # 你的论文库（不进 git）
-data/proceedings/       # 论文集库（不进 git）
-data/inbox/             # 放入 PDF 即可入库
-data/inbox-proceedings/ # 显式放入论文集 PDF/MD，走专用 proceedings 流程
+.qwen/QWEN.md           # ↑ Qwen Code 的项目上下文文件
+.qwen/skills/           # ↑ 符号链接，方便 Qwen agent 发现
+data/libraries/papers/  # 论文库（fresh default）
+data/libraries/proceedings/ # 论文集库（fresh default）
+data/spool/inbox/       # 常规入库 inbox
+data/spool/inbox-proceedings/ # proceedings 专用 inbox
 ```
 
-完整模块参考 → [`CLAUDE.md`](CLAUDE.md) 或 [`AGENTS.md`](AGENTS.md)
+从旧版 runtime layout 升级时，请看上面的[升级到 1.4](#升级到-14)。
+
+Agent 入口文档 → [`CLAUDE.md`](CLAUDE.md) 或 [`AGENTS.md`](AGENTS.md)
+深入 agent 参考 → [`docs/guide/agent-reference.md`](docs/guide/agent-reference.md)
 
 ## 引用
 

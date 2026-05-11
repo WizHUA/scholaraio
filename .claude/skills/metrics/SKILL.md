@@ -1,10 +1,6 @@
 ---
 name: metrics
-description: View LLM token usage, API call timing, and runtime metrics. Use when the user asks about token consumption, API costs, or performance statistics.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["monitoring", "metrics", "llm", "tokens"]
+description: Use when the user asks about LLM token usage, API call timing, runtime metrics, cost signals, or performance statistics.
 ---
 # 查看指标统计
 

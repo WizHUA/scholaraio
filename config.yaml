@@ -1,8 +1,11 @@
 # ScholarAIO configuration 配置文件
 
 paths:
-  papers_dir: data/papers # Ingested papers directory 已入库论文目录
-  index_db: data/index.db # SQLite index file SQLite 索引文件
+  # papers_dir: data/libraries/papers # Optional override; when omitted/legacy-default, ScholarAIO uses data/libraries/papers and auto-falls back to existing data/papers
+  state_root: data/state # Durable internal state root 持久内部状态根目录
+  cache_root: data/cache # Rebuildable cache root 可重建缓存根目录
+  runtime_root: data/runtime # Ephemeral runtime root 临时运行产物根目录
+  # index_db: data/state/search/index.db # Optional override; when omitted ScholarAIO uses state_root/search/index.db and auto-falls back to existing data/index.db
 
 # LLM backend LLM 后端配置
 # Put api_key in config.local.yaml (gitignored) or use env vars:
@@ -68,14 +71,31 @@ ingest:
   pdf_fallback_order: [auto] # 完全自定义降级链；可写 [pymupdf] 或 [docling,pymupdf]，auto=自动检测本机可用解析器
   pdf_fallback_auto_detect: true # 是否启用自动检测（建议开启）
 
+# Paper2Any external extension Paper2Any 外部增强组件
+# ScholarAIO talks to a lightweight MCP sidecar. The upstream OpenDCAI/Paper2Any
+# checkout stays outside tracked source, by default under data/runtime/extensions/paper2any/Paper2Any.
+paper2any:
+  transport: mcp
+  mcp_url: http://127.0.0.1:8770/mcp
+  root: null # default: data/runtime/extensions/paper2any/Paper2Any
+  base_url: http://127.0.0.1:8000 # optional upstream Paper2Any FastAPI backend
+  api_key: null # optional MCP bearer token -> config.local.yaml
+  backend_api_key: null # required for upstream /api routes -> config.local.yaml
+
 # Semantic embeddings 语义向量
 embed:
+  provider: local # local | openai-compat | none
   model: Qwen/Qwen3-Embedding-0.6B
   cache_dir: ~/.cache/modelscope/hub/models
   device: auto # auto | cpu | cuda
   top_k: 10 # vsearch default results vsearch 默认返回条数
   source: modelscope # modelscope (China) | huggingface (international) 模型下载源
   hf_endpoint: null # optional HuggingFace mirror endpoint (env SCHOLARAIO_HF_ENDPOINT > HF_ENDPOINT)
+  api_base: null # OpenAI-compatible endpoint, e.g. https://api.openai.com/v1
+  api_key: null # -> config.local.yaml or env SCHOLARAIO_EMBED_API_KEY
+  api_timeout: 30
+  batch_size: 64
+  max_retries: 3
 
 search:
   top_k: 20 # FTS5 search default results 关键词搜索默认返回条数
@@ -86,13 +106,13 @@ logging:
   file: data/scholaraio.log
   max_bytes: 10000000 # 10 MB, rotate on overflow 超出轮转
   backup_count: 3
-  metrics_db: data/metrics.db
+  # metrics_db: data/state/metrics/metrics.db # Optional override; omitted by default so existing data/metrics.db can still be discovered automatically
 
 # Topic modeling 主题建模
 topics:
   min_topic_size: 5 # HDBSCAN min cluster size 最小聚类大小
   nr_topics: 0 # 0=auto, -1=no merge, N=target count 目标主题数
-  model_dir: data/topic_model # Model save directory 模型保存目录
+  # model_dir: data/state/topics # Optional override; omitted by default so existing data/topic_model/ can still be discovered automatically
 
 # Translation 翻译
 translate:
@@ -100,6 +120,35 @@ translate:
   target_lang: zh # Target language code 目标语言代码
   chunk_size: 4000 # Max chars per translation chunk 分块翻译最大字符数
   concurrency: 20 # Total translation concurrency budget; single-paper uses it for chunk parallelism, batch mode splits it across papers 总翻译并发预算
+
+# Rsync backup 远程增量备份
+backup:
+  source_dir: data # Local directory to sync 本地备份源目录（默认整个 data）
+  rsync_bin: rsync # rsync executable 可执行文件名或绝对路径
+  ssh_bin: ssh # ssh executable 可执行文件名或绝对路径；backup run 会强制追加 -o BatchMode=yes
+  targets: {}
+  # targets:
+  #   lab:
+  #     host: backup.example.com
+  #     user: alice
+  #     path: /srv/scholaraio
+  #     port: 22
+  #     identity_file: ~/.ssh/id_ed25519 # Prefer placing secrets/host-specific overrides in config.local.yaml
+  #     password: "" # Optional fallback for password-only hosts; keep it only in config.local.yaml
+  #     mode: default # default | append | append-verify
+  #     compress: true
+  #     enabled: true
+  #     exclude: ["*.tmp", "metrics.db"]
+  # Prepare SSH keys or a config.local.yaml password override, plus known_hosts; backup run is non-interactive.
+
+# Static published-paper site generation 发布站点生成
+publish:
+  site_output_dir: null # Optional default for `scholaraio publish-site --out-dir`
+  published_dir: published # Local audited archive root; git-ignored by this repo
+
+# OpenAlex API key (optional, enables higher rate limits)
+# openalex:
+#   api_key: null  # -> config.local.yaml or env OPENALEX_API_KEY
 
 # Zotero integration Zotero 集成
 zotero:

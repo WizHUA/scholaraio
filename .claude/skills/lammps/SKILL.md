@@ -1,6 +1,6 @@
 ---
 name: lammps
-description: Use when working on classical materials simulations with LAMMPS, especially interatomic-potential selection, shock or deformation setups, thermodynamic runs, and structure analysis for solids or nanomaterials.
+description: Use when working on classical materials simulations with LAMMPS, including potential selection, shock or deformation setups, thermodynamic runs, or structure analysis for solids and nanomaterials.
 ---
 
 # LAMMPS 材料科学模拟

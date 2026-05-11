@@ -14,3 +14,20 @@ def test_runtime_version_matches_project_version():
     project_version = match.group("version")
 
     assert __version__ == project_version
+
+
+def test_citation_version_matches_project_version():
+    root = Path(__file__).resolve().parents[1]
+    pyproject_text = (root / "pyproject.toml").read_text(encoding="utf-8")
+    project_match = re.search(r'(?m)^version = "(?P<version>[^"]+)"$', pyproject_text)
+    assert project_match is not None
+
+    citation_text = (root / "CITATION.cff").read_text(encoding="utf-8")
+    citation_match = re.search(r'(?m)^version:\s*"?([^"\n]+)"?\s*$', citation_text)
+    assert citation_match is not None
+
+    assert citation_match.group(1).strip() == project_match.group("version")
+
+
+def test_release_version_is_1_4_0():
+    assert __version__ == "1.4.0"

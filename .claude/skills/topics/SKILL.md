@@ -1,10 +1,6 @@
 ---
 name: topics
-description: Explore topic distribution in the paper library using BERTopic clustering. Build/rebuild topic models, view topic overview, list papers in a topic, merge similar topics, and generate HTML visualizations. Use when the user asks about research themes, topic distribution, or wants to discover cross-domain connections.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["academic", "research", "topic-modeling", "bertopic"]
+description: Use when the user asks about research themes, topic distribution, BERTopic clustering, topic overview, topic papers, topic merges, or HTML topic visualizations.
 ---
 # 主题探索
 
@@ -45,7 +41,7 @@ scholaraio topics
 
 **查看指定主题的论文：**
 ```bash
-scholaraio topics --topic <ID> [--top N]
+scholaraio topics --topic <ID> [--limit N]
 ```
 
 **生成 HTML 可视化（6 张图表）：**

@@ -1,4 +1,4 @@
-"""Tests for scholaraio.log — logging setup, session ID, ui()."""
+"""Tests for scholaraio.core.log — logging setup, session ID, ui()."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import logging
 
 import pytest
 
-from scholaraio.config import _build_config
-from scholaraio.log import get_logger, get_session_id, reset, setup, ui
+from scholaraio.core.config import _build_config
+from scholaraio.core.log import get_logger, get_session_id, reset, setup, ui
 
 
 @pytest.fixture(autouse=True)

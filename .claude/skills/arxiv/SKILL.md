@@ -1,6 +1,6 @@
 ---
 name: arxiv
-description: Use when the user wants to browse arXiv preprints, search arXiv directly, fetch a PDF by arXiv ID or URL, or send a preprint straight into the ingest pipeline.
+description: Use when the user wants to browse arXiv preprints, search arXiv directly, fetch a PDF by arXiv ID or URL, or send a preprint into the ScholarAIO ingest pipeline.
 ---
 
 # arXiv Preprints
@@ -20,7 +20,7 @@ Use this skill when the user wants to:
 - "随便看看" arXiv 上某个方向最近有什么
 - search arXiv directly instead of only searching the local library
 - fetch a paper from an arXiv ID, `abs` URL, or `pdf` URL
-- download a preprint into `data/inbox/`
+- download a preprint into the configured paper inbox (fresh default: `data/spool/inbox/`)
 - send an arXiv preprint directly into the ingest pipeline
 
 Do not use this skill when:
@@ -85,5 +85,5 @@ scholaraio arxiv fetch 2603.25200 --ingest
 
 - Make it clear when results come from arXiv rather than the local library
 - When using federated search, distinguish local hits from arXiv-only hits
-- When fetching without ingest, mention that the PDF now sits in `data/inbox/`
+- When fetching without ingest, mention that the PDF now sits in the configured paper inbox (fresh default: `data/spool/inbox/`)
 - When fetching with ingest, mention that the paper has been sent into the normal ingest flow

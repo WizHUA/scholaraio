@@ -1,4 +1,4 @@
-"""Tests for scholaraio.document (Office document inspection)."""
+"""Tests for scholaraio.services.document (Office document inspection)."""
 
 from __future__ import annotations
 
@@ -90,143 +90,143 @@ def sample_xlsx(tmp_path: Path) -> Path:
 
 class TestInspectDispatcher:
     def test_auto_detect_pptx(self, sample_pptx):
-        from scholaraio.document import inspect
+        from scholaraio.services.document import inspect
 
         result = inspect(sample_pptx)
         assert "PPTX" in result
 
     def test_auto_detect_docx(self, sample_docx):
-        from scholaraio.document import inspect
+        from scholaraio.services.document import inspect
 
         result = inspect(sample_docx)
         assert "DOCX" in result
 
     def test_auto_detect_xlsx(self, sample_xlsx):
-        from scholaraio.document import inspect
+        from scholaraio.services.document import inspect
 
         result = inspect(sample_xlsx)
         assert "XLSX" in result
 
     def test_format_override(self, sample_pptx):
-        from scholaraio.document import inspect
+        from scholaraio.services.document import inspect
 
         result = inspect(sample_pptx, fmt="pptx")
         assert "PPTX" in result
 
     def test_unsupported_format(self, tmp_path):
-        from scholaraio.document import inspect
+        from scholaraio.services.document import inspect
 
         p = tmp_path / "test.pdf"
         p.write_text("dummy")
-        with pytest.raises(ValueError, match="不支持"):
+        with pytest.raises(ValueError, match="Unsupported"):
             inspect(p)
 
     def test_file_not_found(self, tmp_path):
-        from scholaraio.document import inspect
+        from scholaraio.services.document import inspect
 
         with pytest.raises(FileNotFoundError):
             inspect(tmp_path / "nonexistent.pptx")
 
     def test_directory_path_rejected(self, tmp_path):
-        from scholaraio.document import inspect
+        from scholaraio.services.document import inspect
 
-        with pytest.raises(ValueError, match="不是文件"):
+        with pytest.raises(ValueError, match="not a file"):
             inspect(tmp_path)
 
 
 class TestInspectPptx:
     def test_slide_count(self, sample_pptx):
-        from scholaraio.document import inspect_pptx
+        from scholaraio.services.document import inspect_pptx
 
         result = inspect_pptx(sample_pptx)
-        assert "2 页" in result
+        assert "2 slides" in result
 
     def test_text_content(self, sample_pptx):
-        from scholaraio.document import inspect_pptx
+        from scholaraio.services.document import inspect_pptx
 
         result = inspect_pptx(sample_pptx)
         assert "Hello World" in result
 
     def test_table_detected(self, sample_pptx):
-        from scholaraio.document import inspect_pptx
+        from scholaraio.services.document import inspect_pptx
 
         result = inspect_pptx(sample_pptx)
         assert "[Table 3x2]" in result
         assert "Name" in result
 
     def test_summary_section(self, sample_pptx):
-        from scholaraio.document import inspect_pptx
+        from scholaraio.services.document import inspect_pptx
 
         result = inspect_pptx(sample_pptx)
-        assert "总结" in result
-        assert "表格: 1" in result
+        assert "Summary" in result
+        assert "Tables: 1" in result
 
 
 class TestInspectDocx:
     def test_heading_detected(self, sample_docx):
-        from scholaraio.document import inspect_docx
+        from scholaraio.services.document import inspect_docx
 
         result = inspect_docx(sample_docx)
         assert "Test Document" in result
         assert "Heading 1" in result
 
     def test_paragraph_detected(self, sample_docx):
-        from scholaraio.document import inspect_docx
+        from scholaraio.services.document import inspect_docx
 
         result = inspect_docx(sample_docx)
         assert "test paragraph" in result
 
     def test_table_detected(self, sample_docx):
-        from scholaraio.document import inspect_docx
+        from scholaraio.services.document import inspect_docx
 
         result = inspect_docx(sample_docx)
         assert "[Table 2x3]" in result
 
     def test_summary(self, sample_docx):
-        from scholaraio.document import inspect_docx
+        from scholaraio.services.document import inspect_docx
 
         result = inspect_docx(sample_docx)
-        assert "总结" in result
+        assert "Summary" in result
         assert "H1:" in result
         assert "H2:" in result
 
 
 class TestInspectXlsx:
     def test_sheet_names(self, sample_xlsx):
-        from scholaraio.document import inspect_xlsx
+        from scholaraio.services.document import inspect_xlsx
 
         result = inspect_xlsx(sample_xlsx)
         assert "Data" in result
         assert "Summary" in result
 
     def test_header_preview(self, sample_xlsx):
-        from scholaraio.document import inspect_xlsx
+        from scholaraio.services.document import inspect_xlsx
 
         result = inspect_xlsx(sample_xlsx)
         assert "Name" in result
         assert "Score" in result
 
     def test_data_preview(self, sample_xlsx):
-        from scholaraio.document import inspect_xlsx
+        from scholaraio.services.document import inspect_xlsx
 
         result = inspect_xlsx(sample_xlsx)
         assert "Alice" in result
 
     def test_frozen_panes(self, sample_xlsx):
-        from scholaraio.document import inspect_xlsx
+        from scholaraio.services.document import inspect_xlsx
 
         result = inspect_xlsx(sample_xlsx)
-        assert "冻结窗格" in result
+        assert "Frozen panes" in result
 
     def test_chart_detected(self, sample_xlsx):
-        from scholaraio.document import inspect_xlsx
+        from scholaraio.services.document import inspect_xlsx
 
         result = inspect_xlsx(sample_xlsx)
         assert "BarChart" in result
         assert "Scores" in result
 
     def test_summary(self, sample_xlsx):
-        from scholaraio.document import inspect_xlsx
+        from scholaraio.services.document import inspect_xlsx
 
         result = inspect_xlsx(sample_xlsx)
-        assert "图表: 1" in result
+        assert "Charts: 1" in result

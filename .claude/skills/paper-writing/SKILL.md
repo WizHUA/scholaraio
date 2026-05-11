@@ -1,10 +1,6 @@
 ---
 name: paper-writing
-description: Assist with writing sections of a research paper (Introduction, Related Work, Method, Results, Discussion, Conclusion). Leverages workspace papers for citations and evidence. Use when the user wants help drafting or revising specific paper sections.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["academic", "writing", "research", "sections"]
+description: Use when the user wants help drafting or revising a research paper section, including Introduction, Related Work, Method, Results, Discussion, or Conclusion.
 ---
 # 论文写作辅助
 
@@ -73,7 +69,7 @@ scholaraio show "<paper-id>" --append-notes "## YYYY-MM-DD | <workspace> | paper
    scholaraio ws search <name> "<实验条件>"
    scholaraio show <paper-id> --layer 3      # 结论
    ```
-3. **读图对比**：读取参考论文中的结果图表（`data/papers/<dir>/images/`），与用户的实验结果做定性/定量对比
+3. **读图对比**：读取参考论文中的结果图表（configured papers library 下的 `<dir>/images/`），与用户的实验结果做定性/定量对比
 4. **编写代码验证**：用 Python 做数据分析、统计检验、可视化——用计算结果支撑 Discussion 中的论点
 5. Results：客观描述发现，引用图表
 6. Discussion：解释原因、对比文献、讨论局限性

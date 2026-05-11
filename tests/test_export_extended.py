@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from scholaraio.export import export_markdown_refs, export_ris, meta_to_ris
+from scholaraio.services.export import export_markdown_refs, export_ris, meta_to_ris
 
 # ============================================================================
 #  RIS export
@@ -116,8 +116,8 @@ class TestCitationStyles:
     """Citation style discovery, loading, and validation."""
 
     def test_list_styles_includes_builtins(self, tmp_papers):
-        from scholaraio.citation_styles import BUILTIN_STYLES, list_styles
-        from scholaraio.config import Config
+        from scholaraio.core.config import Config
+        from scholaraio.stores.citation_styles import BUILTIN_STYLES, list_styles
 
         cfg = Config()
         cfg._root = tmp_papers.parent
@@ -126,8 +126,8 @@ class TestCitationStyles:
         assert builtin_names == set(BUILTIN_STYLES)
 
     def test_get_formatter_builtin(self):
-        from scholaraio.citation_styles import get_formatter
-        from scholaraio.config import Config
+        from scholaraio.core.config import Config
+        from scholaraio.stores.citation_styles import get_formatter
 
         cfg = Config()
         fmt = get_formatter("apa", cfg)
@@ -135,24 +135,24 @@ class TestCitationStyles:
         assert result.startswith("1. ")
 
     def test_get_formatter_missing_raises(self, tmp_path):
-        from scholaraio.citation_styles import get_formatter
-        from scholaraio.config import Config
+        from scholaraio.core.config import Config
+        from scholaraio.stores.citation_styles import get_formatter
 
         cfg = Config()
         cfg._root = tmp_path
         (tmp_path / "data" / "papers").mkdir(parents=True)
-        with pytest.raises(FileNotFoundError, match="不存在"):
+        with pytest.raises(FileNotFoundError, match="does not exist"):
             get_formatter("nonexistent-style", cfg)
 
     def test_custom_style_loaded_from_file(self, tmp_path):
-        from scholaraio.citation_styles import get_formatter, list_styles
-        from scholaraio.config import Config
+        from scholaraio.core.config import Config
+        from scholaraio.stores.citation_styles import get_formatter, list_styles
 
         cfg = Config()
         cfg._root = tmp_path
-        papers_dir = tmp_path / "data" / "papers"
+        papers_dir = tmp_path / "data" / "libraries" / "papers"
         papers_dir.mkdir(parents=True)
-        styles_dir = tmp_path / "data" / "citation_styles"
+        styles_dir = tmp_path / "data" / "libraries" / "citation_styles"
         styles_dir.mkdir(parents=True)
 
         # Write a minimal custom style
@@ -172,20 +172,48 @@ class TestCitationStyles:
         result = fmt({"title": "Hello"}, 1)
         assert "CUSTOM: Hello" in result
 
+    def test_custom_style_uses_configured_styles_dir(self, tmp_path):
+        from scholaraio.core.config import _build_config
+        from scholaraio.stores.citation_styles import get_formatter, list_styles
+
+        cfg = _build_config(
+            {
+                "paths": {
+                    "papers_dir": "library/papers",
+                    "citation_styles_dir": "stores/styles",
+                }
+            },
+            tmp_path,
+        )
+        cfg.papers_dir.mkdir(parents=True, exist_ok=True)
+        cfg.citation_styles_dir.mkdir(parents=True, exist_ok=True)
+        (cfg.citation_styles_dir / "custom-style.py").write_text(
+            "def format_ref(meta, idx=None):\n"
+            "    title = meta.get('title', '')\n"
+            "    return f'{idx}. OVERRIDE: {title}'\n",
+            encoding="utf-8",
+        )
+
+        names = [s["name"] for s in list_styles(cfg)]
+        assert "custom-style" in names
+
+        fmt = get_formatter("custom-style", cfg)
+        assert fmt({"title": "Y"}, 3) == "3. OVERRIDE: Y"
+
     def test_path_traversal_rejected(self):
-        from scholaraio.citation_styles import get_formatter
-        from scholaraio.config import Config
+        from scholaraio.core.config import Config
+        from scholaraio.stores.citation_styles import get_formatter
 
         cfg = Config()
-        with pytest.raises(ValueError, match="引用格式名称无效"):
+        with pytest.raises(ValueError, match="Invalid citation style name"):
             get_formatter("../../../etc/passwd", cfg)
 
     def test_path_traversal_dots_rejected(self):
-        from scholaraio.citation_styles import get_formatter
-        from scholaraio.config import Config
+        from scholaraio.core.config import Config
+        from scholaraio.stores.citation_styles import get_formatter
 
         cfg = Config()
-        with pytest.raises(ValueError, match="引用格式名称无效"):
+        with pytest.raises(ValueError, match="Invalid citation style name"):
             get_formatter("foo/bar", cfg)
 
 
@@ -201,7 +229,7 @@ class TestExportDocx:
     """DOCX generation from Markdown content."""
 
     def test_basic_export(self, tmp_path):
-        from scholaraio.export import export_docx
+        from scholaraio.services.export import export_docx
 
         out = tmp_path / "test.docx"
         export_docx("# Hello\n\nWorld", out, title="Test Doc")
@@ -209,14 +237,14 @@ class TestExportDocx:
         assert out.stat().st_size > 0
 
     def test_export_without_title(self, tmp_path):
-        from scholaraio.export import export_docx
+        from scholaraio.services.export import export_docx
 
         out = tmp_path / "notitle.docx"
         export_docx("Just a paragraph.", out)
         assert out.exists()
 
     def test_export_with_table(self, tmp_path):
-        from scholaraio.export import export_docx
+        from scholaraio.services.export import export_docx
 
         md = "| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
         out = tmp_path / "table.docx"

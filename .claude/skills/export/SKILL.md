@@ -1,10 +1,6 @@
 ---
 name: export
-description: Export papers from the knowledge base to standard citation formats (BibTeX, RIS, Markdown reference list) or export any Markdown content as a Word DOCX file. Supports exporting all papers, specific papers, or filtered by year/journal. Use when the user needs citation files, wants to import into Zotero/Endnote/Mendeley, needs a reference list for writing, or wants to share a document as Word.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["academic", "bibtex", "citations", "export", "docx", "ris"]
+description: Use when the user needs BibTeX, RIS, Markdown reference lists, filtered citation exports, custom citation styles, or a Markdown-to-DOCX export for sharing.
 ---
 # 导出论文与文档
 
@@ -99,7 +95,10 @@ scholaraio style show jcp       # 查看某个自定义格式的代码
 
 ### 原理
 
-自定义格式以 Python 文件存储在 `data/citation_styles/<name>.py`，必须实现一个函数：
+自定义格式以 Python 文件存储在配置的 citation styles 目录中。fresh 默认是
+`data/libraries/citation_styles/<name>.py`。如果用户仍有旧版
+`data/citation_styles/` 内容，先通过 `scholaraio migrate upgrade --migration-id <id> --confirm`
+迁移后再导出。格式文件必须实现一个函数：
 
 ```python
 def format_ref(meta: dict, idx: int | None = None) -> str:
@@ -129,15 +128,15 @@ def format_ref(meta: dict, idx: int | None = None) -> str:
 
 3. **写 Python 格式化函数并保存**
    - 根据格式说明写 `format_ref(meta, idx)` 函数
-   - 保存到 `data/citation_styles/<name>.py`
-   - 可同时保存 `data/citation_styles/<name>.json`（记录来源和示例）
+   - 保存到当前 `cfg.citation_styles_dir / "<name>.py"`（fresh 默认 `data/libraries/citation_styles/<name>.py`）
+   - 可同时保存同目录的 `<name>.json`（记录来源和示例）
 
 4. **导出**
    ```bash
    scholaraio export markdown --all --style <name> -o workspace/refs.md
    ```
 
-### 示例：JCP 格式文件（data/citation_styles/jcp.py）
+### 示例：JCP 格式文件（fresh 默认 data/libraries/citation_styles/jcp.py）
 
 ```python
 # Journal of Chemical Physics / AIP Publishing 编号格式
@@ -226,7 +225,7 @@ echo "# 标题\n内容..." | scholaraio export docx --output workspace/doc.docx
 → 执行 `export markdown --all --style vancouver`
 
 用户说："按 JCP 格式导出，我要投 Journal of Chemical Physics"
-→ 先 `style list` 检查，若无则获取 JCP 格式说明、写 `data/citation_styles/jcp.py`，再 `export markdown --all --style jcp`
+→ 先 `style list` 检查，若无则获取 JCP 格式说明、写入当前 citation styles 目录（fresh 默认 `data/libraries/citation_styles/jcp.py`），再 `export markdown --all --style jcp`
 
 用户说："把这篇文献综述导出成 Word 文件"
 → 执行 `export docx --input workspace/review.md --output workspace/review.docx`

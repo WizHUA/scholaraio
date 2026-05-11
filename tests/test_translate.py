@@ -11,10 +11,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from scholaraio.translate import (
+from scholaraio.services.translate import (
     SKIP_ALL_CHUNKS_FAILED,
     _build_translate_prompt,
     _split_into_chunks,
+    _subdivide_chunk_for_retry,
     _translate_chunk_with_retry,
     _translation_workdir,
     batch_translate,
@@ -162,6 +163,15 @@ class TestSplitIntoChunks:
         for p in paragraphs:
             assert p in rejoined
 
+    def test_retry_subdivision_recursively_shrinks_restored_formula_chunks(self):
+        formula = " ".join([f"$x_{i}+y_{i}=z_{i}$" for i in range(40)])
+        text = formula + "\n\n" + formula
+
+        chunks = _subdivide_chunk_for_retry(text, chunk_size=400)
+
+        assert len(chunks) >= 4
+        assert all(len(chunk) <= 400 for chunk in chunks)
+
 
 class TestBuildTranslatePrompt:
     """Prompt construction with terminology rules."""
@@ -200,10 +210,15 @@ class TestTranslatePaper:
             llm=SimpleNamespace(model="test-model"),
         )
 
-        monkeypatch.setattr("scholaraio.translate.detect_language", lambda text: "en")
-        monkeypatch.setattr(
-            "scholaraio.translate._split_into_chunks", lambda text, chunk_size: ["chunk-1", "chunk-2", "chunk-3"]
-        )
+        monkeypatch.setattr("scholaraio.services.translate.detect_language", lambda text: "en")
+        split_impl = _split_into_chunks
+
+        def fake_split(text, chunk_size):
+            if text == "Original text":
+                return ["chunk-1", "chunk-2", "chunk-3"]
+            return split_impl(text, chunk_size)
+
+        monkeypatch.setattr("scholaraio.services.translate._split_into_chunks", fake_split)
 
         state = {"in_flight": 0, "max_in_flight": 0}
         lock = threading.Lock()
@@ -219,7 +234,7 @@ class TestTranslatePaper:
                 state["in_flight"] -= 1
             return outputs[chunk]
 
-        monkeypatch.setattr("scholaraio.translate._translate_chunk", fake_translate)
+        monkeypatch.setattr("scholaraio.services.translate._translate_chunk", fake_translate)
 
         result = translate_paper(paper_dir, cfg, target_lang="zh", force=True)
 
@@ -242,20 +257,27 @@ class TestTranslatePaper:
             workspace_dir=tmp_path / "workspace",
         )
 
-        monkeypatch.setattr("scholaraio.translate.detect_language", lambda text: "en")
-        monkeypatch.setattr(
-            "scholaraio.translate._split_into_chunks", lambda text, chunk_size: ["# 标题\n\n![](images/fig1.png)\n"]
-        )
-        monkeypatch.setattr("scholaraio.translate._translate_chunk", lambda chunk, lang, config: chunk)
+        monkeypatch.setattr("scholaraio.services.translate.detect_language", lambda text: "en")
+        split_impl = _split_into_chunks
+
+        def fake_split(text, chunk_size):
+            if text == "# Title\n\n![](images/fig1.png)\n":
+                return ["# 标题\n\n![](images/fig1.png)\n"]
+            return split_impl(text, chunk_size)
+
+        monkeypatch.setattr("scholaraio.services.translate._split_into_chunks", fake_split)
+        monkeypatch.setattr("scholaraio.services.translate._translate_chunk", lambda chunk, lang, config: chunk)
 
         result = translate_paper(paper_dir, cfg, target_lang="zh", force=True, portable=True)
 
-        portable_path = tmp_path / "workspace" / "translation-ws" / paper_dir.name / "paper_zh.md"
+        portable_path = tmp_path / "workspace" / "_system" / "translation-bundles" / paper_dir.name / "paper_zh.md"
         assert result.ok is True
         assert result.portable_path == portable_path
         assert portable_path.exists()
         assert "](images/fig1.png)" in portable_path.read_text(encoding="utf-8")
-        assert (tmp_path / "workspace" / "translation-ws" / paper_dir.name / "images" / "fig1.png").exists()
+        assert (
+            tmp_path / "workspace" / "_system" / "translation-bundles" / paper_dir.name / "images" / "fig1.png"
+        ).exists()
         assert (paper_dir / "paper_zh.md").exists()
 
     def test_translate_paper_portable_export_reuses_existing_translation(self, tmp_path, monkeypatch):
@@ -274,20 +296,57 @@ class TestTranslatePaper:
             workspace_dir=tmp_path / "workspace",
         )
 
-        monkeypatch.setattr("scholaraio.translate.detect_language", lambda text: "en")
+        monkeypatch.setattr("scholaraio.services.translate.detect_language", lambda text: "en")
         monkeypatch.setattr(
-            "scholaraio.translate._translate_chunk",
+            "scholaraio.services.translate._translate_chunk",
             lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not call llm")),
         )
 
         result = translate_paper(paper_dir, cfg, target_lang="zh", force=False, portable=True)
 
-        portable_path = tmp_path / "workspace" / "translation-ws" / paper_dir.name / "paper_zh.md"
+        portable_path = tmp_path / "workspace" / "_system" / "translation-bundles" / paper_dir.name / "paper_zh.md"
         assert result.ok is True
         assert result.path == paper_dir / "paper_zh.md"
         assert result.portable_path == portable_path
         assert portable_path.exists()
-        assert (tmp_path / "workspace" / "translation-ws" / paper_dir.name / "images" / "fig1.png").exists()
+        assert (
+            tmp_path / "workspace" / "_system" / "translation-bundles" / paper_dir.name / "images" / "fig1.png"
+        ).exists()
+
+    def test_translate_paper_portable_export_uses_configured_bundle_root(self, tmp_path, monkeypatch):
+        paper_dir = tmp_path / "Smith-2023-Test"
+        images_dir = paper_dir / "images"
+        paper_dir.mkdir(parents=True)
+        images_dir.mkdir()
+        (paper_dir / "paper.md").write_text("# Title\n\n![](images/fig1.png)\n", encoding="utf-8")
+        (paper_dir / "meta.json").write_text("{}", encoding="utf-8")
+        (images_dir / "fig1.png").write_bytes(b"fake-image")
+
+        cfg = SimpleNamespace(
+            translate=SimpleNamespace(target_lang="zh", chunk_size=1000, concurrency=1),
+            llm=SimpleNamespace(model="test-model"),
+            workspace_dir=tmp_path / "workspace",
+            translation_bundle_root=tmp_path / "projects" / "_system" / "translation-bundles",
+        )
+
+        monkeypatch.setattr("scholaraio.services.translate.detect_language", lambda text: "en")
+        split_impl = _split_into_chunks
+
+        def fake_split(text, chunk_size):
+            if text == "# Title\n\n![](images/fig1.png)\n":
+                return ["# 标题\n\n![](images/fig1.png)\n"]
+            return split_impl(text, chunk_size)
+
+        monkeypatch.setattr("scholaraio.services.translate._split_into_chunks", fake_split)
+        monkeypatch.setattr("scholaraio.services.translate._translate_chunk", lambda chunk, lang, config: chunk)
+
+        result = translate_paper(paper_dir, cfg, target_lang="zh", force=True, portable=True)
+
+        portable_path = cfg.translation_bundle_root / paper_dir.name / "paper_zh.md"
+        assert result.ok is True
+        assert result.portable_path == portable_path
+        assert portable_path.exists()
+        assert (cfg.translation_bundle_root / paper_dir.name / "images" / "fig1.png").exists()
 
     def test_translate_paper_does_not_write_output_when_all_chunks_fail(self, tmp_path, monkeypatch):
         paper_dir = tmp_path / "Smith-2023-Test"
@@ -301,7 +360,7 @@ class TestTranslatePaper:
         )
 
         monkeypatch.setattr(
-            "scholaraio.translate._translate_chunk",
+            "scholaraio.services.translate._translate_chunk",
             lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("llm unavailable")),
         )
 
@@ -326,8 +385,8 @@ class TestTranslatePaper:
                 raise TimeoutError("network jitter")
             return "译文"
 
-        monkeypatch.setattr("scholaraio.translate.time.sleep", fake_sleep)
-        monkeypatch.setattr("scholaraio.translate._translate_chunk", flaky_translate)
+        monkeypatch.setattr("scholaraio.services.translate.time.sleep", fake_sleep)
+        monkeypatch.setattr("scholaraio.services.translate._translate_chunk", flaky_translate)
 
         translated, used_attempts = _translate_chunk_with_retry("chunk", "zh", cfg)
 
@@ -347,14 +406,59 @@ class TestTranslatePaper:
             attempts["count"] += 1
             raise TimeoutError("still failing")
 
-        monkeypatch.setattr("scholaraio.translate.time.sleep", fake_sleep)
-        monkeypatch.setattr("scholaraio.translate._translate_chunk", always_fail)
+        monkeypatch.setattr("scholaraio.services.translate.time.sleep", fake_sleep)
+        monkeypatch.setattr("scholaraio.services.translate._translate_chunk", always_fail)
 
         with pytest.raises(TimeoutError):
             _translate_chunk_with_retry("chunk", "zh", cfg)
 
         assert attempts["count"] == 5
         assert sleep_calls == [1.0, 2.0, 4.0, 8.0]
+
+    def test_translate_paper_splits_timeout_like_chunk_and_completes(self, tmp_path, monkeypatch):
+        paper_dir = tmp_path / "Smith-2023-Test"
+        paper_dir.mkdir(parents=True)
+        (paper_dir / "paper.md").write_text("Original text", encoding="utf-8")
+        (paper_dir / "meta.json").write_text("{}", encoding="utf-8")
+
+        cfg = SimpleNamespace(
+            translate=SimpleNamespace(target_lang="zh", chunk_size=20, concurrency=1),
+            llm=SimpleNamespace(model="test-model"),
+        )
+        out_path = paper_dir / "paper_zh.md"
+        large_chunk = "Sentence alpha. Sentence beta. Sentence gamma. Sentence delta."
+
+        monkeypatch.setattr("scholaraio.services.translate.detect_language", lambda text: "en")
+        monkeypatch.setattr("scholaraio.services.translate.time.sleep", lambda _: None)
+
+        split_impl = _split_into_chunks
+
+        def fake_split(text, chunk_size):
+            if text == "Original text":
+                return [large_chunk]
+            return split_impl(text, chunk_size)
+
+        monkeypatch.setattr("scholaraio.services.translate._split_into_chunks", fake_split)
+
+        translate_calls: list[str] = []
+
+        def fake_translate(chunk, lang, config, timeout=None):
+            translate_calls.append(chunk)
+            if len(chunk) > 20:
+                raise TimeoutError("chunk timed out")
+            return f"<{chunk}>"
+
+        monkeypatch.setattr("scholaraio.services.translate._translate_chunk", fake_translate)
+
+        result = translate_paper(paper_dir, cfg, target_lang="zh", force=True)
+
+        assert result.ok is True
+        assert result.partial is False
+        assert result.path == out_path
+        assert out_path.exists()
+        assert translate_calls.count(large_chunk) == 2
+        assert len([chunk for chunk in translate_calls if chunk != large_chunk]) >= 2
+        assert "<Sentence alpha." in out_path.read_text(encoding="utf-8")
 
     def test_translate_paper_persists_parts_and_resumes_from_workdir(self, tmp_path, monkeypatch):
         paper_dir = tmp_path / "Smith-2023-Test"
@@ -370,10 +474,16 @@ class TestTranslatePaper:
         workdir = _translation_workdir(paper_dir, "zh")
         progress_messages: list[str] = []
 
-        monkeypatch.setattr("scholaraio.translate.detect_language", lambda text: "en")
-        monkeypatch.setattr(
-            "scholaraio.translate._split_into_chunks", lambda text, chunk_size: ["chunk-1", "chunk-2", "chunk-3"]
-        )
+        monkeypatch.setattr("scholaraio.services.translate.detect_language", lambda text: "en")
+        split_impl = _split_into_chunks
+
+        def fake_split(text, chunk_size):
+            if text == "Original text":
+                return ["chunk-1", "chunk-2", "chunk-3"]
+            return split_impl(text, chunk_size)
+
+        monkeypatch.setattr("scholaraio.services.translate._split_into_chunks", fake_split)
+        monkeypatch.setattr("scholaraio.services.translate.time.sleep", lambda _: None)
 
         first_run_calls: list[str] = []
 
@@ -383,7 +493,7 @@ class TestTranslatePaper:
                 return "译文-1"
             raise TimeoutError("chunk timeout")
 
-        monkeypatch.setattr("scholaraio.translate._translate_chunk", first_run_translate)
+        monkeypatch.setattr("scholaraio.services.translate._translate_chunk", first_run_translate)
 
         first = translate_paper(
             paper_dir, cfg, target_lang="zh", force=True, progress_callback=progress_messages.append
@@ -402,9 +512,9 @@ class TestTranslatePaper:
         assert (workdir / "parts" / "000001.md").exists()
         assert (workdir / "state.json").exists()
         assert (workdir / "chunks.json").exists()
-        assert any("开始翻译，共 3 块" in msg for msg in progress_messages)
-        assert any("翻译进度: 1/3" in msg for msg in progress_messages)
-        assert any("翻译在第 2/3 块中断" in msg for msg in progress_messages)
+        assert any("Starting translation: 3 chunks" in msg for msg in progress_messages)
+        assert any("Translation progress: 1/3" in msg for msg in progress_messages)
+        assert any("Translation interrupted at chunk 2/3" in msg for msg in progress_messages)
 
         second_run_calls: list[str] = []
         resume_messages: list[str] = []
@@ -413,7 +523,7 @@ class TestTranslatePaper:
             second_run_calls.append(chunk)
             return {"chunk-2": "译文-2", "chunk-3": "译文-3"}[chunk]
 
-        monkeypatch.setattr("scholaraio.translate._translate_chunk", second_run_translate)
+        monkeypatch.setattr("scholaraio.services.translate._translate_chunk", second_run_translate)
 
         second = translate_paper(
             paper_dir,
@@ -430,8 +540,8 @@ class TestTranslatePaper:
         assert second_run_calls == ["chunk-2", "chunk-3"]
         assert out_path.read_text(encoding="utf-8") == "译文-1\n\n译文-2\n\n译文-3"
         assert not workdir.exists()
-        assert any("继续翻译：已完成 1/3 块" in msg for msg in resume_messages)
-        assert any("翻译完成: 3/3 块" in msg for msg in resume_messages)
+        assert any("Resuming translation: completed 1/3 chunks" in msg for msg in resume_messages)
+        assert any("Translation completed: 3/3 chunks" in msg for msg in resume_messages)
 
     def test_translate_paper_reuses_trailing_successful_chunks_after_gap(self, tmp_path, monkeypatch):
         paper_dir = tmp_path / "Smith-2023-Test"
@@ -446,19 +556,32 @@ class TestTranslatePaper:
         out_path = paper_dir / "paper_zh.md"
         workdir = _translation_workdir(paper_dir, "zh")
 
-        monkeypatch.setattr("scholaraio.translate.detect_language", lambda text: "en")
-        monkeypatch.setattr(
-            "scholaraio.translate._split_into_chunks", lambda text, chunk_size: ["chunk-1", "chunk-2", "chunk-3"]
-        )
+        monkeypatch.setattr("scholaraio.services.translate.detect_language", lambda text: "en")
+        split_impl = _split_into_chunks
+
+        def fake_split(text, chunk_size):
+            if text == "Original text":
+                return ["chunk-1", "chunk-2", "chunk-3"]
+            return split_impl(text, chunk_size)
+
+        monkeypatch.setattr("scholaraio.services.translate._split_into_chunks", fake_split)
+        monkeypatch.setattr("scholaraio.services.translate.time.sleep", lambda _: None)
+        progress_messages: list[str] = []
 
         def first_run_translate(chunk, lang, config):
             if chunk == "chunk-2":
                 raise TimeoutError("middle chunk timeout")
             return {"chunk-1": "译文-1", "chunk-3": "译文-3"}[chunk]
 
-        monkeypatch.setattr("scholaraio.translate._translate_chunk", first_run_translate)
+        monkeypatch.setattr("scholaraio.services.translate._translate_chunk", first_run_translate)
 
-        first = translate_paper(paper_dir, cfg, target_lang="zh", force=True)
+        first = translate_paper(
+            paper_dir,
+            cfg,
+            target_lang="zh",
+            force=True,
+            progress_callback=progress_messages.append,
+        )
 
         assert first.ok is False
         assert first.partial is True
@@ -466,6 +589,7 @@ class TestTranslatePaper:
         assert out_path.read_text(encoding="utf-8") == "译文-1"
         assert (workdir / "parts" / "000001.md").exists()
         assert (workdir / "parts" / "000003.md").exists()
+        assert any("completed 2/3 chunks" in msg and "prefix 1/3" in msg for msg in progress_messages)
 
         second_run_calls: list[str] = []
 
@@ -473,7 +597,7 @@ class TestTranslatePaper:
             second_run_calls.append(chunk)
             return {"chunk-2": "译文-2"}[chunk]
 
-        monkeypatch.setattr("scholaraio.translate._translate_chunk", second_run_translate)
+        monkeypatch.setattr("scholaraio.services.translate._translate_chunk", second_run_translate)
 
         second = translate_paper(paper_dir, cfg, target_lang="zh", force=False)
 
@@ -503,7 +627,7 @@ class TestBatchTranslate:
             received_chunk_workers.append(kwargs.get("chunk_workers"))
             return SimpleNamespace(ok=True, partial=False, skip_reason="")
 
-        monkeypatch.setattr("scholaraio.translate.translate_paper", fake_translate_paper)
+        monkeypatch.setattr("scholaraio.services.translate.translate_paper", fake_translate_paper)
 
         stats = batch_translate(papers_dir, cfg, target_lang="zh", force=True)
 

@@ -1,6 +1,6 @@
 # API Reference
 
-::: scholaraio.index
+::: scholaraio.services.index
     options:
       members:
         - build_index
@@ -15,7 +15,7 @@
         - get_citing_papers
         - get_shared_references
 
-::: scholaraio.loader
+::: scholaraio.services.loader
     options:
       members:
         - load_l1
@@ -27,19 +27,19 @@
         - enrich_toc
         - enrich_l3
 
-::: scholaraio.export
+::: scholaraio.services.export
     options:
       members:
         - meta_to_bibtex
         - export_bibtex
 
-::: scholaraio.audit
+::: scholaraio.services.audit
     options:
       members:
         - Issue
         - audit_papers
 
-::: scholaraio.workspace
+::: scholaraio.projects.workspace
     options:
       members:
         - create
@@ -48,7 +48,7 @@
         - list_workspaces
         - read_paper_ids
 
-::: scholaraio.papers
+::: scholaraio.stores.papers
     options:
       members:
         - paper_dir
@@ -56,20 +56,20 @@
         - md_path
         - iter_paper_dirs
 
-::: scholaraio.proceedings
+::: scholaraio.stores.proceedings
     options:
       members:
         - proceedings_db_path
         - iter_proceedings_dirs
         - iter_proceedings_papers
 
-::: scholaraio.vectors
+::: scholaraio.services.vectors
     options:
       members:
         - build_vectors
         - vsearch
 
-::: scholaraio.topics
+::: scholaraio.services.topics
     options:
       members:
         - build_topics
@@ -80,14 +80,14 @@
         - reduce_topics_to
         - merge_topics_by_ids
 
-::: scholaraio.translate
+::: scholaraio.services.translate
     options:
       members:
         - translate_paper
         - batch_translate
         - detect_language
 
-::: scholaraio.explore
+::: scholaraio.stores.explore
     options:
       members:
         - fetch_explore
@@ -100,7 +100,7 @@
         - explore_db_path
         - validate_explore_name
 
-::: scholaraio.insights
+::: scholaraio.services.insights
     options:
       members:
         - extract_hot_keywords
@@ -110,12 +110,12 @@
         - recommend_unread_neighbors
         - list_workspace_counts
 
-::: scholaraio.ingest.extractor
+::: scholaraio.services.ingest_metadata.extractor
     options:
       members:
         - get_extractor
 
-::: scholaraio.ingest.metadata
+::: scholaraio.services.ingest_metadata
     options:
       members:
         - PaperMetadata
@@ -129,7 +129,7 @@
         - rename_paper
         - write_metadata_json
 
-::: scholaraio.ingest.pipeline
+::: scholaraio.services.ingest.pipeline
     options:
       members:
         - StepResult

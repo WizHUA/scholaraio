@@ -1,14 +1,14 @@
-"""Tests for scholaraio.ingest.metadata._api arXiv-specific enrichment behavior."""
+"""Tests for scholaraio.services.ingest_metadata._api arXiv-specific enrichment behavior."""
 
 from __future__ import annotations
 
-from scholaraio.ingest.metadata._api import enrich_metadata
-from scholaraio.ingest.metadata._models import PaperMetadata
+from scholaraio.services.ingest_metadata._api import enrich_metadata
+from scholaraio.services.ingest_metadata._models import PaperMetadata
 
 
 def test_enrich_metadata_prefers_arxiv_year_over_s2_year_for_preprint(monkeypatch):
     monkeypatch.setattr(
-        "scholaraio.ingest.metadata._api.get_arxiv_paper",
+        "scholaraio.services.ingest_metadata._api.get_arxiv_paper",
         lambda arxiv_id: {
             "title": "Direct numerical simulation of out-scale-actuated spanwise wall oscillation in turbulent boundary layers",
             "authors": ["Jizhong Zhang", "Fazle Hussain", "Jie Yao"],
@@ -18,8 +18,8 @@ def test_enrich_metadata_prefers_arxiv_year_over_s2_year_for_preprint(monkeypatc
             "doi": "",
         },
     )
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.query_crossref", lambda **kwargs: {})
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.query_openalex", lambda **kwargs: {})
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_crossref", lambda **kwargs: {})
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_openalex", lambda **kwargs: {})
 
     def fake_s2(*, doi="", title="", arxiv_id=""):
         assert arxiv_id == "2603.25200"
@@ -35,7 +35,7 @@ def test_enrich_metadata_prefers_arxiv_year_over_s2_year_for_preprint(monkeypatc
             "references": [],
         }
 
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.query_semantic_scholar", fake_s2)
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_semantic_scholar", fake_s2)
 
     meta = PaperMetadata(
         title="Direct numerical simulation of out-scale-actuated spanwise wall oscillation in turbulent boundary layers",
@@ -51,7 +51,7 @@ def test_enrich_metadata_prefers_arxiv_year_over_s2_year_for_preprint(monkeypatc
 
 def test_enrich_metadata_normalizes_arxiv_comma_separated_authors(monkeypatch):
     monkeypatch.setattr(
-        "scholaraio.ingest.metadata._api.get_arxiv_paper",
+        "scholaraio.services.ingest_metadata._api.get_arxiv_paper",
         lambda arxiv_id: {
             "title": "Direct numerical simulation of out-scale-actuated spanwise wall oscillation in turbulent boundary layers",
             "authors": ["Zhang, Jizhong", "Hussain, Fazle", "Yao, Jie"],
@@ -61,10 +61,10 @@ def test_enrich_metadata_normalizes_arxiv_comma_separated_authors(monkeypatch):
             "doi": "",
         },
     )
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.query_crossref", lambda **kwargs: {})
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.query_openalex", lambda **kwargs: {})
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_crossref", lambda **kwargs: {})
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_openalex", lambda **kwargs: {})
     monkeypatch.setattr(
-        "scholaraio.ingest.metadata._api.query_semantic_scholar",
+        "scholaraio.services.ingest_metadata._api.query_semantic_scholar",
         lambda **kwargs: {"externalIds": {"ArXiv": "2603.25200"}, "references": []},
     )
 
@@ -79,7 +79,7 @@ def test_enrich_metadata_normalizes_arxiv_comma_separated_authors(monkeypatch):
 
 def test_enrich_metadata_ignores_arxiv_datacite_doi_for_preprint(monkeypatch):
     monkeypatch.setattr(
-        "scholaraio.ingest.metadata._api.get_arxiv_paper",
+        "scholaraio.services.ingest_metadata._api.get_arxiv_paper",
         lambda arxiv_id: {
             "title": "Direct numerical simulation of out-scale-actuated spanwise wall oscillation in turbulent boundary layers",
             "authors": ["Jizhong Zhang", "Fazle Hussain", "Jie Yao"],
@@ -89,13 +89,13 @@ def test_enrich_metadata_ignores_arxiv_datacite_doi_for_preprint(monkeypatch):
             "doi": "10.48550/arXiv.2603.25200",
         },
     )
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.query_crossref", lambda **kwargs: {})
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_crossref", lambda **kwargs: {})
     monkeypatch.setattr(
-        "scholaraio.ingest.metadata._api.query_openalex",
+        "scholaraio.services.ingest_metadata._api.query_openalex",
         lambda **kwargs: {"doi": "https://doi.org/10.48550/arXiv.2603.25200", "id": "https://openalex.org/W1"},
     )
     monkeypatch.setattr(
-        "scholaraio.ingest.metadata._api.query_semantic_scholar",
+        "scholaraio.services.ingest_metadata._api.query_semantic_scholar",
         lambda **kwargs: {
             "externalIds": {"ArXiv": "2603.25200", "DOI": "10.48550/arXiv.2603.25200"},
             "references": [],
@@ -113,11 +113,11 @@ def test_enrich_metadata_ignores_arxiv_datacite_doi_for_preprint(monkeypatch):
 
 
 def test_enrich_metadata_uses_s2_title_and_authors_when_arxiv_lookup_returns_only_s2(monkeypatch):
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.get_arxiv_paper", lambda arxiv_id: {})
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.query_crossref", lambda **kwargs: {})
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.query_openalex", lambda **kwargs: {})
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.get_arxiv_paper", lambda arxiv_id: {})
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_crossref", lambda **kwargs: {})
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_openalex", lambda **kwargs: {})
     monkeypatch.setattr(
-        "scholaraio.ingest.metadata._api.query_semantic_scholar",
+        "scholaraio.services.ingest_metadata._api.query_semantic_scholar",
         lambda **kwargs: {
             "title": "Recovered from Semantic Scholar",
             "authors": [{"name": "Alice Example"}, {"name": "Bob Example"}],
@@ -158,10 +158,10 @@ def test_enrich_metadata_normalizes_versioned_arxiv_id_before_arxiv_and_s2_looku
         seen["s2"] = arxiv_id
         return {"externalIds": {"ArXiv": arxiv_id}, "references": [], "paperId": "paper-123"}
 
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.get_arxiv_paper", fake_get_arxiv_paper)
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.query_crossref", lambda **kwargs: {})
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.query_openalex", lambda **kwargs: {})
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.query_semantic_scholar", fake_s2)
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.get_arxiv_paper", fake_get_arxiv_paper)
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_crossref", lambda **kwargs: {})
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_openalex", lambda **kwargs: {})
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_semantic_scholar", fake_s2)
 
     meta = PaperMetadata(title="Original OCR Title", arxiv_id="hep-th/9901001v3")
 
@@ -174,7 +174,7 @@ def test_enrich_metadata_normalizes_versioned_arxiv_id_before_arxiv_and_s2_looku
 
 def test_enrich_metadata_records_arxiv_as_api_source_when_only_arxiv_lookup_succeeds(monkeypatch):
     monkeypatch.setattr(
-        "scholaraio.ingest.metadata._api.get_arxiv_paper",
+        "scholaraio.services.ingest_metadata._api.get_arxiv_paper",
         lambda arxiv_id: {
             "title": "Official arXiv only result",
             "authors": ["Alice Example"],
@@ -184,9 +184,9 @@ def test_enrich_metadata_records_arxiv_as_api_source_when_only_arxiv_lookup_succ
             "doi": "",
         },
     )
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.query_crossref", lambda **kwargs: {})
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.query_openalex", lambda **kwargs: {})
-    monkeypatch.setattr("scholaraio.ingest.metadata._api.query_semantic_scholar", lambda **kwargs: {})
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_crossref", lambda **kwargs: {})
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_openalex", lambda **kwargs: {})
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_semantic_scholar", lambda **kwargs: {})
 
     meta = PaperMetadata(title="Original OCR Title", arxiv_id="hep-th/9901001v3")
 
@@ -196,9 +196,46 @@ def test_enrich_metadata_records_arxiv_as_api_source_when_only_arxiv_lookup_succ
     assert meta.extraction_method == "arxiv_lookup"
 
 
+def test_enrich_metadata_falls_back_to_crossref_reference_dois_when_s2_references_missing(monkeypatch):
+    monkeypatch.setattr(
+        "scholaraio.services.ingest_metadata._api.query_crossref",
+        lambda **kwargs: (
+            {
+                "DOI": "10.1234/example",
+                "title": ["Particle-laden channel flow"],
+                "container-title": ["Journal of Fluid Mechanics"],
+                "author": [{"given": "Alice", "family": "Example"}],
+                "published-print": {"date-parts": [[2024]]},
+                "reference": [
+                    {"DOI": "10.1017/jfm.1"},
+                    {"DOI": "10.1017/jfm.2"},
+                    {"unstructured": "No DOI here"},
+                    {"doi": "10.1017/JFM.1"},
+                ],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "scholaraio.services.ingest_metadata._api.query_semantic_scholar",
+        lambda **kwargs: {
+            "paperId": "paper-123",
+            "title": "Particle-laden channel flow",
+            "externalIds": {"DOI": "10.1234/example"},
+            "references": [{"externalIds": {}}],
+        },
+    )
+    monkeypatch.setattr("scholaraio.services.ingest_metadata._api.query_openalex", lambda **kwargs: {})
+
+    meta = PaperMetadata(title="Particle-laden channel flow", doi="10.1234/example")
+
+    enrich_metadata(meta)
+
+    assert meta.references == ["10.1017/jfm.1", "10.1017/jfm.2"]
+
+
 def test_enrich_metadata_rejects_title_search_hit_when_author_and_year_both_conflict(monkeypatch):
     monkeypatch.setattr(
-        "scholaraio.ingest.metadata._api.query_crossref",
+        "scholaraio.services.ingest_metadata._api.query_crossref",
         lambda **kwargs: (
             {
                 "DOI": "10.1002/9781118527221.ch2",
@@ -215,7 +252,7 @@ def test_enrich_metadata_rejects_title_search_hit_when_author_and_year_both_conf
         ),
     )
     monkeypatch.setattr(
-        "scholaraio.ingest.metadata._api.query_openalex",
+        "scholaraio.services.ingest_metadata._api.query_openalex",
         lambda **kwargs: (
             {
                 "doi": "https://doi.org/10.1002/9781118527221.ch2",
@@ -228,7 +265,7 @@ def test_enrich_metadata_rejects_title_search_hit_when_author_and_year_both_conf
         ),
     )
     monkeypatch.setattr(
-        "scholaraio.ingest.metadata._api.query_semantic_scholar",
+        "scholaraio.services.ingest_metadata._api.query_semantic_scholar",
         lambda **kwargs: {},
     )
 

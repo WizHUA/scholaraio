@@ -1,10 +1,6 @@
 ---
 name: research-gap
-description: Identify research gaps and open questions from the literature in a workspace. Combines topic clustering, citation analysis, and cross-paper comparison. Use when the user wants to find unexplored areas, formulate research questions, or assess where the field is heading.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["academic", "research", "gap-analysis", "discovery"]
+description: Use when the user wants to identify research gaps, open questions, unexplored areas, cross-paper limitations, or future directions from workspace literature.
 ---
 # 研究空白识别
 
@@ -41,7 +37,7 @@ scholaraio topics --topic <ID>                # 各主题下的论文
 - 哪些方向论文渐少（可能已成熟或被放弃）
 - 哪些方向有早期工作但近年无跟进（潜在空白）
 
-直接用 Python 读取 `data/papers/*/meta.json` 做统计分析。
+直接用 Python 读取 configured papers library 下的 `*/meta.json` 做统计分析。
 
 #### 维度 3：方法论对比
 扫描工作区论文的方法部分（L3-L4），绘制方法论矩阵：

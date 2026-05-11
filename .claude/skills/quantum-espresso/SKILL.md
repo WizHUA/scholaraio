@@ -1,6 +1,6 @@
 ---
 name: quantum-espresso
-description: Use when working on first-principles materials calculations with Quantum ESPRESSO, especially SCF, band structures, DOS, phonons, electron-phonon coupling, Fermi surfaces, or charge-density analysis.
+description: Use when working on first-principles materials calculations with Quantum ESPRESSO, including SCF, band structures, DOS, phonons, electron-phonon coupling, Fermi surfaces, or charge density.
 ---
 
 # Quantum ESPRESSO 第一性原理计算

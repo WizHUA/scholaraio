@@ -2,6 +2,8 @@
 
 ScholarAIO provides multiple search modes to find papers in your knowledge base.
 
+For result-count flags, `--limit` is the canonical form. `--top` remains available as a compatibility alias.
+
 ## Search Modes
 
 ### Keyword Search (FTS5)
@@ -64,7 +66,7 @@ scholaraio search "turbulence" --year 2020-2024 --journal "JFM" --type review
 ## Top-Cited Papers
 
 ```bash
-scholaraio top-cited --top 20 --year 2020-
+scholaraio top-cited --limit 20 --year 2020-
 ```
 
 ## arXiv Search and Fetch

@@ -9,12 +9,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Graphviz DOT/SVG diagram workflow**: Added the Graphviz diagram guide, linked it from the draw skill and writing/CLI docs, and expanded `setup check` to report `Graphviz dot` and `Inkscape` with actionable install guidance for SVG rendering and Beamer insertion.
+- **Paper2Any MCP sidecar integration**: Added `scholaraio paper2any` setup, serve, status, and smoke commands, a lightweight MCP sidecar for Paper2Any conversion workflows, configuration and setup diagnostics for the extension checkout and backend API key, and user/agent documentation for running the sidecar from ScholarAIO.
+
+### Changed
+
+- **English CLI and service messages**: Migrated user-facing CLI help, status output, warnings, and service error messages from Chinese to English, and updated the corresponding regression tests so ScholarAIO no longer preserves Chinese compatibility for these message strings.
+
+### Fixed
+
+- **Diagram CLI output noise**: Stopped service-layer diagram generation logs from reusing the user-facing `Generated:` prefix, so `diagram --from-text` reports the generated artifact only once.
+- **Local MinerU batch image assets**: Saved images returned by the local MinerU API into per-PDF `<pdf_stem>_images/` directories and rewrote Markdown references accordingly, preventing `cmd_batch` runs that share one output directory from overwriting generic image names such as `image_1.png`.
+
+## [1.4.0] — 2026-04-25
+
+### Added
+
+- **Fresh-layout runtime and one-command upgrade**: Standardized the current runtime layout under `data/libraries/`, `data/spool/`, `data/state/`, and `workspace/_system/`, and added `scholaraio migrate upgrade --migration-id <id> --confirm` as the release-grade path from supported old roots to the fresh layout.
+- **Migration finalization safety gates**: Hardened `migrate finalize` with journaled `verify -> cleanup -> verify`, workspace `refs/papers.json` migration, system-output migration into `workspace/_system/`, and archival cleanup for both populated and empty legacy roots.
+- **Canonical package architecture**: Completed the package split into `core`, `providers`, `stores`, `projects`, `services`, and `interfaces`, keeping `scholaraio.cli` as the published entrypoint while moving implementation code into canonical namespaces.
+- **Webtools MCP support**: Added generic MCP transport support for external webtools, including `GUILessBingSearch` (`search_bing`) and `qt-web-extractor` (`fetch_url`) while keeping HTTP transport available for hosts that need it.
+- **Release validation evidence**: Added release validation reports that cross-check current behavior against `origin/main`, `v1.3.1`, actual CLI canaries, migration rehearsal evidence, and docs/skill alignment.
+- **Guided single-paper reading workflow**: Added the `paper-guided-reading` skill plus the companion `docs/writing-guide/paper-reading-framework.md` so agents can start from fuzzy intent, confirm one target paper, perform structured deep reading, and persist reusable findings into `notes.md`
+- **Incremental metadata scrub workflow**: Added the `scrub` skill for post-enrich metadata cleanup of low-quality paper records, plus reusable `.scrubbed` marker helpers in `papers.py` and conservative scrub-suspect detection helpers in `audit.py`
+- **Rsync backup workflow** ([#54](https://github.com/ZimoLiao/scholaraio/issues/54)): Added typed `backup` configuration, the `scholaraio.backup` module, `scholaraio backup list/run`, and the `backup` skill so ScholarAIO data can be synced to named remote targets through rsync instead of hand-written shell commands
+- **macOS semantic-search smoke workflow**: Added a dedicated GitHub Actions job on `macos-14` to exercise the `sentence-transformers` -> `faiss-cpu` semantic-search stack and run targeted regression tests for vector-search paths
+- **Academic writing router** ([#55](https://github.com/ZimoLiao/scholaraio/issues/55)): Added the `academic-writing` skill as a stable top-level entry point that routes users by deliverable and writing stage instead of forcing them to guess among multiple writing skills
+- **Deliverable-first writing workflows** ([#55](https://github.com/ZimoLiao/scholaraio/issues/55)): Added lightweight `poster` and `technical-report` skills so conference posters, poster-style summaries, topic reports, and research briefings are first-class workflows rather than implicit combinations of lower-level skills
+- **Writing workflow regression coverage**: Added tests for skill frontmatter validity, router references, approximate host-style skill selection, and 11 rounds of documentation-alignment checks across docs, agent instructions, and marketplace metadata
+- **Rendered web URL ingestion** ([#52](https://github.com/ZimoLiao/scholaraio/issues/52)): Added the native `scholaraio ingest-link` CLI, `ingest-link` skill, and `sources.webtools` connector flow so webpages and online PDFs can be ingested through an external `qt-web-extractor` daemon while preserving provenance fields such as `source_url`, `source_type`, `extracted_at`, and `extraction_method`
+- **References-only metadata refresh**: `scholaraio refetch` can now backfill structured `references` for DOI-bearing papers, with `--references-only` / `--refs-only` to target only papers whose references are still empty and a Semantic Scholar -> Crossref fallback chain when one source has no usable references
+
+### Fixed
+
+- **Diagram IR rendering robustness**: `diagram --from-ir` now accepts common `source` / `target` edge aliases in addition to the canonical `from` / `to` keys, and reports malformed edges as clean CLI errors instead of tracebacks.
+- **Fresh-layout docs and agent entries**: Slimmed agent entry docs into lightweight navigation surfaces, moved deeper runtime guidance into `docs/guide/agent-reference.md`, and aligned README, CLI docs, skills, and setup docs around explicit migration instead of implicit legacy runtime reads.
+- **Skill metadata and routing docs**: Normalized active project skill frontmatter to the cross-agent `name` + `description` shape, made descriptions trigger-focused, refreshed the skill harness validator, and fixed router wording that could steal explicit review-response requests.
+- **Runtime-layout migration correctness**: Fixed migration verification against real migrated libraries, empty legacy root cleanup, workspace output migration, and recovery/finalization edge cases found during repeated live CLI rehearsals.
+- **CLI namespace refactor coverage**: Moved command handlers and shared CLI helpers under `scholaraio.interfaces.cli.*`, keeping command behavior stable while removing implementation dependence on root-level facade modules.
+- **Webtools runtime robustness**: Hardened MCP/HTTP webtools configuration, command output, service error handling, and real local service canaries for `websearch`, `webextract`, and `ingest-link`.
+- **Topic and search edge cases**: Fixed offline topic CLI validation and search-result citation formatting for legacy scalar `citation_count` values.
+- **Writing-skill discovery alignment**: Synchronized `academic-writing`, `docs/guide/writing.md`, `README.md`, `README_CN.md`, `docs/index.md`, `AGENTS.md`, `AGENTS_CN.md`, `CLAUDE.md`, and `clawhub.yaml` so `paper-guided-reading` is discoverable consistently across router, docs, agent instructions, and marketplace metadata
+- **Audit title matching and type-aware skips**: `audit` now compares metadata titles against title-like candidates from the first 80 lines of `paper.md`, honors `title_translated`, keeps `missing_doi` / `missing_journal` warnings active when `paper_type` is blank, and skips front-matter-driven `title_mismatch` false positives for dissertation and document-like records
+- **Backup runtime robustness**: `scholaraio backup run` now reports missing `rsync` executables as controlled CLI errors, shell-quotes the displayed rsync command preview, defaults full-data backups to the safer `default` rsync mode instead of append-only behavior, forces SSH batch mode so runs fail fast instead of hanging on interactive authentication or host-key prompts, supports a `config.local.yaml` password fallback for password-only hosts, and prints concrete setup guidance when authentication or host trust is not ready yet
+- **macOS semantic/unified search crash** ([#65](https://github.com/ZimoLiao/scholaraio/issues/65)): main-library and explore semantic search now embed and normalize the query before loading or searching FAISS indexes, avoiding a known `faiss` / `sentence-transformers` import-order segfault pattern on macOS while preserving existing ranking behavior
+- **Academic writing docs alignment** ([#55](https://github.com/ZimoLiao/scholaraio/issues/55)): Synchronized `docs/guide/writing.md`, `README.md`, `README_CN.md`, `docs/index.md`, `AGENTS.md`, `AGENTS_CN.md`, `CLAUDE.md`, and `clawhub.yaml` around a router-first writing model so poster/report workflows and the academic-writing entry point are discoverable consistently across user and agent surfaces
+- **`ingest-link` reliability and isolation** ([#52](https://github.com/ZimoLiao/scholaraio/issues/52)): URL ingest now preserves extractor PDF autodetect unless `--pdf` is explicitly requested, isolates both temporary inboxes from the real library, skips only failed URLs in multi-link batches, keeps warning-bearing extractions with usable text, retries transient extraction failures with exponential backoff, and avoids overlong fallback filenames for title-less URLs
+- **Scrub workflow edge cases** ([#51](https://github.com/ZimoLiao/scholaraio/issues/51)): `show` now surfaces the stable UUID for partially corrupted records, direct-directory `repair` generates a UUID when recovering markdown-only papers, collision-suffixed directory names no longer get renumbered again by `rename`, and the scrub skill docs now distinguish `invalid_metadata` records from normal `show`-first review paths
+
+### Removed
+
+- **Legacy runtime auto-detection as normal behavior**: Fresh-layout accessors no longer auto-open old runtime roots such as `data/papers/`, `data/explore/`, `data/proceedings/`, or `data/inbox*`; those paths are migration inputs handled by `scholaraio migrate upgrade`.
+- **Legacy root-level public facades**: Removed obsolete public facade modules such as `scholaraio.index`, `scholaraio.workspace`, and `scholaraio.translate`; new code imports canonical namespaces directly.
+
+## [1.3.1] — 2026-04-14
+
+### Added
+
+- **Qwen agent support**: Added `.qwen/skills` symlink to `.claude/skills/` so Qwen-based agents can discover ScholarAIO skills out of the box
+- **Qwen project context**: Added `.qwen/QWEN.md` so Qwen Code has a repository-native project context file instead of relying on `AGENTS.md` / `CLAUDE.md`
 - **Cursor native project rules**: Added `.cursor/rules/scholaraio.mdc` as the primary Cursor integration path, with `AGENTS.md` as the shared multi-agent instruction source and `.cursorrules` kept only as a legacy fallback
+- **OpenAI-compatible embedding backend support**: Added `embed.provider` config with `local` / `openai-compat` / `none` options; cloud API supports configurable `api_base`, `api_key`, `api_timeout`, `batch_size`, and `max_retries`; `provider=none` disables embeddings gracefully and falls back to keyword-only search
 
 ### Fixed
 
 - **Cursor compatibility CI coverage**: Added regression coverage to keep the Cursor rule wrapper lightweight and explicitly MCP-free
 - **Proceedings routing test stability**: Tests no longer assume the first `data/proceedings` entry is a proceedings volume directory, avoiding CI-only failures when `proceedings.db` sorts before real volume folders
+- **Unified search transparency**: `usearch` and `fsearch` now print an explicit message when semantic retrieval is unavailable and the command degrades to keyword-only search
+- **Zhipu GLM OpenAI-compatible chat routing** ([#60](https://github.com/ZimoLiao/scholaraio/issues/60)): `call_llm()` now maps `open.bigmodel.cn/api/paas` to the correct `/v4/chat/completions` endpoint instead of incorrectly forcing `/v1/chat/completions`
 
 ## [1.3.0] — 2026-04-06
 
@@ -95,7 +157,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **Workspace batch add**: `ws add` now supports `--search "<query>"`, `--topic <id>`, and `--all` flags for bulk paper addition, with `--top`/`--year`/`--journal`/`--type` filter support
+- **Workspace batch add**: `ws add` now supports `--search "<query>"`, `--topic <id>`, and `--all` flags for bulk paper addition, with `--limit`/`--year`/`--journal`/`--type` filter support (`--top` remains a compatibility alias)
 - **PDF optional dependency**: `pymupdf` declared in `pyproject.toml` as `[pdf]` extra (included in `[full]`), fixing undeclared dependency for long PDF splitting
 - **Subagent information tiers**: T1/T2/T3 architecture documented in CLAUDE.md and AGENTS.md for structured context management
 
