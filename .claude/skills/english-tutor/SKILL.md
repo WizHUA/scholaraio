@@ -1,10 +1,6 @@
 ---
 name: english-tutor
 description: "Use when the user writes prompts in English or hybrid English-Chinese and wants language corrections. The agent will first provide a dedicated 'Language Feedback' section to correct grammatical errors and awkward phrasing, and then proceed with the actual task."
-version: 1.0.0
-author: WizHUA/scholaraio
-license: MIT
-tags: ["language", "tutor", "english", "learning"]
 ---
 # English Tutor 英语助教
 

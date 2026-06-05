@@ -1,10 +1,6 @@
 ---
 name: super-fetch
-description: Advanced WAF-bypassing web scraping and search workflow. Uses DrissionPage for dynamic rendering and alternative searches (like so.com) with regex for anti-bot SERP extraction. Converts articles to Markdown with source annotations. Use when standard fetch/search tools are blocked by WAFs (like Zhihu's ZSE-CK) or rate-limiters.
-version: 1.0.0
-author: ZimoLiao/scholaraio
-license: MIT
-tags: ["scraping", "drissionpage", "waf-bypass", "markdown", "research"]
+description: Use when standard fetch or search tools are blocked by WAFs, anti-bot checks, rate limits, or dynamic rendering needs, and the user needs source-annotated web content converted to Markdown.
 ---
 # 强力文献/网页抓取 (Super-Fetch)
 

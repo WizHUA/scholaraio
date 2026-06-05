@@ -1,10 +1,6 @@
 ---
 name: onboard
-description: Quick session onboarding — introduce ScholarAIO capabilities, check environment, survey the knowledge base, list workspaces, and navigate to the target project. Use at the start of a new session when the user wants to get oriented, pick a workspace, or understand the current state of the library.
-version: 1.0.0
-author: WizHUA/scholaraio
-license: MIT
-tags: ["onboarding", "session", "workspace", "overview"]
+description: Use when the user starts a new ScholarAIO session and wants to get oriented, check the environment, survey the knowledge base, list workspaces, or navigate to the target project.
 ---
 # Session Onboard / 会话入场
 

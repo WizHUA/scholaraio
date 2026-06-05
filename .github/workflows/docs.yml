@@ -33,6 +33,7 @@ jobs:
 
   deploy:
     needs: build
+    if: github.repository == 'ZimoLiao/scholaraio'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

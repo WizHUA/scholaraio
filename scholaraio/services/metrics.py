@@ -545,7 +545,7 @@ def _call_openai_compat(
         if json_mode and "response_format" in payload:
             err_text = ""
             try:
-                err_text = (resp.text or "")
+                err_text = resp.text or ""
             except Exception:
                 err_text = ""
             if "response_format" in err_text and "json_object" in err_text and "not supported" in err_text:
