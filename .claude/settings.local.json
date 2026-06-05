@@ -6,7 +6,44 @@
       "Bash(conda env:*)",
       "Bash(python -m scholaraio.cli usearch \"QCSC\" --top 5 2>&1)",
       "Bash(D:\\\\zzztempE\\\\scholaraio\\\\.venv\\\\Scripts\\\\scholaraio.exe usearch:*)",
-      "Bash(cd D:/zzztempE/scholaraio && .venv/Scripts/scholaraio.exe usearch \"QCSC\" --top 5 2>&1)"
+      "Bash(cd D:/zzztempE/scholaraio && .venv/Scripts/scholaraio.exe usearch \"QCSC\" --top 5 2>&1)",
+      "Bash(python -m scholaraio.cli --help)",
+      "Bash(python *)",
+      "Bash(xargs ls -lt)",
+      "Bash(sort -k6,7 -r)",
+      "Bash(.venv/Scripts/python -c \"import mineru_open_api; print\\(mineru_open_api.__file__\\)\")",
+      "Bash(.venv/Scripts/mineru-open-api --help)",
+      "Bash(mkdir -p workspace/95-PPTSpace/nudt-slide-typst-main/source/04-DQTetris/img)",
+      "Bash(cp \"D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260601154353.png\" workspace/95-PPTSpace/nudt-slide-typst-main/source/04-DQTetris/img/nonlocal-ops.png)",
+      "Bash(cp \"D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602111522.png\" workspace/95-PPTSpace/nudt-slide-typst-main/source/04-DQTetris/img/qig-partition.png)",
+      "Bash(cp \"D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602112824.png\" workspace/95-PPTSpace/nudt-slide-typst-main/source/04-DQTetris/img/hyperedge-catent.png)",
+      "Bash(cp \"D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602132713.png\" workspace/95-PPTSpace/nudt-slide-typst-main/source/04-DQTetris/img/dqtetris-arch.png)",
+      "Bash(typst compile *)",
+      "Bash(git clone *)",
+      "Bash(cp \"D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260601154353.png\" \"D:/zzztempE/scholaraio/workspace/95-PPTSpace/LaTeX-PPT-Template/dqtetris/img/nonlocal-ops.png\")",
+      "Bash(cp \"D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602111522.png\" \"D:/zzztempE/scholaraio/workspace/95-PPTSpace/LaTeX-PPT-Template/dqtetris/img/qig-partition.png\")",
+      "Bash(cp \"D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602112824.png\" \"D:/zzztempE/scholaraio/workspace/95-PPTSpace/LaTeX-PPT-Template/dqtetris/img/hyperedge-catent.png\")",
+      "Bash(cp \"D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602132713.png\" \"D:/zzztempE/scholaraio/workspace/95-PPTSpace/LaTeX-PPT-Template/dqtetris/img/dqtetris-arch.png\")",
+      "Bash(xelatex -interaction=nonstopmode dqtetris.tex)",
+      "Bash(pdfinfo dqtetris.pdf)",
+      "Bash(cp 'D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260601154353.png' D:/zzztempE/scholaraio/workspace/95-PPTSpace/dqtetris-html/img/nonlocal-ops.png)",
+      "Bash(cp 'D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602111522.png' D:/zzztempE/scholaraio/workspace/95-PPTSpace/dqtetris-html/img/qig-partition.png)",
+      "Bash(cp 'D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602112824.png' D:/zzztempE/scholaraio/workspace/95-PPTSpace/dqtetris-html/img/hyperedge-catent.png)",
+      "Bash(cp 'D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602132713.png' D:/zzztempE/scholaraio/workspace/95-PPTSpace/dqtetris-html/img/dqtetris-arch.png)",
+      "Bash(cp 'D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602165351.png' D:/zzztempE/scholaraio/workspace/95-PPTSpace/dqtetris-html/img/exp-10q-comm.png)",
+      "Bash(.venv/Scripts/python -c ' *)",
+      "Bash(D:/zzztempE/scholaraio/.venv/Scripts/python -c ' *)",
+      "Bash(grep *)",
+      "Bash(cp 'D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602165351.png' D:/zzztempE/scholaraio/workspace/95-PPTSpace/nudt-slide-typst-main/source/04-DQTetris/img/exp-10q-comm.png)",
+      "Bash(cp 'D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602165403.png' D:/zzztempE/scholaraio/workspace/95-PPTSpace/nudt-slide-typst-main/source/04-DQTetris/img/exp-10q-time.png)",
+      "Bash(cp 'D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602171805.png' D:/zzztempE/scholaraio/workspace/95-PPTSpace/nudt-slide-typst-main/source/04-DQTetris/img/exp-50q-comm.png)",
+      "Bash(cp 'D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602171818.png' D:/zzztempE/scholaraio/workspace/95-PPTSpace/nudt-slide-typst-main/source/04-DQTetris/img/exp-50q-time.png)",
+      "Bash(cp 'D:/zzztempE/Projects/ob-main/08-Assets/images/Pasted image 20260602172611.png' D:/zzztempE/scholaraio/workspace/95-PPTSpace/nudt-slide-typst-main/source/04-DQTetris/img/exp-vary-modules.png)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "web-search",
+    "web-extractor",
+    "paper2any"
+  ]
 }
