@@ -324,6 +324,7 @@ def test_check_mineru_reports_actionable_failure(monkeypatch):
     cfg = Config()
     monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "")
     monkeypatch.setattr("scholaraio.services.setup.shutil.which", lambda _name: None)
+    monkeypatch.setattr("scholaraio.services.setup.importlib.util.find_spec", lambda _name: None)
 
     class DummyRequests:
         @staticmethod
@@ -361,6 +362,34 @@ def test_check_mineru_prefers_local_server_even_when_token_cli_missing(monkeypat
 
     assert ok is True
     assert "local server" in detail
+
+
+def test_check_mineru_accepts_installed_open_api_module_when_cli_not_on_path(monkeypatch):
+    cfg = Config()
+    monkeypatch.setattr(cfg, "resolved_mineru_api_key", lambda: "token")
+    monkeypatch.setattr("scholaraio.services.setup.shutil.which", lambda _name: None)
+
+    class DummyRequests:
+        @staticmethod
+        def get(*_args, **_kwargs):
+            raise RuntimeError("offline")
+
+    class DummySpec:
+        origin = "site-packages/mineru_open_api/__init__.py"
+
+    def fake_find_spec(name: str, package=None):
+        if name == "mineru_open_api":
+            return DummySpec()
+        return None
+
+    monkeypatch.setitem(__import__("sys").modules, "requests", DummyRequests)
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+
+    ok, detail = _check_mineru(cfg, "en")
+
+    assert ok is True
+    assert "mineru-open-api" in detail
+    assert "token configured" in detail
 
 
 def test_wizard_parser_mineru_choice_skips_auto_probe(monkeypatch, capsys):

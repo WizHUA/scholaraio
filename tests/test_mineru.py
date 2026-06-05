@@ -433,6 +433,20 @@ def test_convert_pdf_namespaces_returned_images_by_pdf_stem(tmp_path, monkeypatc
     assert (tmp_path / "second_images" / "image_1.png").read_bytes() == b"second-image"
 
 
+def test_find_mineru_open_api_cli_checks_active_python_environment(tmp_path, monkeypatch):
+    import scholaraio.providers.mineru as mineru
+
+    scripts_dir = tmp_path / "Scripts"
+    scripts_dir.mkdir()
+    cli = scripts_dir / "mineru-open-api.exe"
+    cli.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    monkeypatch.setattr(sys, "executable", str(scripts_dir / "python.exe"))
+
+    assert mineru._find_mineru_open_api_cli() == str(cli)
+
+
 def test_convert_pdf_cloud_invokes_mineru_open_api_extract_with_token_and_flags(tmp_path, monkeypatch):
     pdf_path = tmp_path / "paper.pdf"
     pdf_path.write_bytes(b"%PDF-1.4")
@@ -548,7 +562,7 @@ def test_convert_pdf_cloud_returns_actionable_error_when_cli_missing(tmp_path, m
     pdf_path.write_bytes(b"%PDF-1.4")
 
     _allow_pdf_validation(monkeypatch)
-    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setattr("scholaraio.providers.mineru._find_mineru_open_api_cli", lambda: None)
 
     result = convert_pdf_cloud(
         pdf_path,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 
 import pytest
 
@@ -46,6 +47,60 @@ class TestSetup:
         cfg = _build_config({}, tmp_path)
         sid = setup(cfg)
         assert get_session_id() == sid
+
+    def test_reconfigures_legacy_console_encoding(self, tmp_path, monkeypatch):
+        class FakeStdout:
+            encoding = "gbk"
+
+            def __init__(self):
+                self.text = ""
+                self.reconfigured = False
+
+            def reconfigure(self, *, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+                self.reconfigured = True
+
+            def write(self, text):
+                text.encode(self.encoding)
+                self.text += text
+
+            def flush(self):
+                pass
+
+        fake_stdout = FakeStdout()
+        monkeypatch.setattr(sys, "stdout", fake_stdout)
+
+        cfg = _build_config({}, tmp_path)
+        setup(cfg)
+        ui("Python ✓ 中文")
+
+        assert fake_stdout.reconfigured is True
+        assert "Python ✓ 中文" in fake_stdout.text
+
+    def test_replaces_unencodable_console_text_when_reconfigure_is_unavailable(self, tmp_path, monkeypatch):
+        class LegacyStdout:
+            encoding = "gbk"
+
+            def __init__(self):
+                self.text = ""
+
+            def write(self, text):
+                text.encode(self.encoding)
+                self.text += text
+                return len(text)
+
+            def flush(self):
+                pass
+
+        legacy_stdout = LegacyStdout()
+        monkeypatch.setattr(sys, "stdout", legacy_stdout)
+
+        cfg = _build_config({}, tmp_path)
+        setup(cfg)
+        ui("Python ✓ 中文")
+
+        assert "Python ? 中文" in legacy_stdout.text
 
 
 class TestGetLogger:

@@ -30,6 +30,45 @@ _FILE_DATEFMT = "%Y-%m-%d %H:%M:%S"
 _CONSOLE_FMT = "%(message)s"
 
 
+class _EncodingFallbackStream:
+    """Write through a text stream, replacing unencodable console characters."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def __getattr__(self, name: str):
+        return getattr(self._stream, name)
+
+    @property
+    def encoding(self):
+        return getattr(self._stream, "encoding", None)
+
+    def write(self, text: str) -> int:
+        try:
+            return self._stream.write(text)
+        except UnicodeEncodeError:
+            encoding = getattr(self._stream, "encoding", None) or sys.getdefaultencoding()
+            safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+            return self._stream.write(safe_text)
+
+    def flush(self) -> None:
+        self._stream.flush()
+
+
+def _ensure_text_stream_unicode_safe(stream):
+    """Prefer UTF-8 console output when the host gives us a legacy code page."""
+    encoding = (getattr(stream, "encoding", None) or "").lower()
+    if encoding.startswith("utf"):
+        return stream
+    reconfigure = getattr(stream, "reconfigure", None)
+    if callable(reconfigure):
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError, TypeError):
+            pass
+    return _EncodingFallbackStream(stream)
+
+
 def setup(cfg: Config) -> str:
     """初始化 root logger，返回本次会话的 session_id。
 
@@ -62,7 +101,7 @@ def setup(cfg: Config) -> str:
     root.addHandler(fh)
 
     # -- Console handler (INFO, bare message) --
-    ch = logging.StreamHandler(sys.stdout)
+    ch = logging.StreamHandler(_ensure_text_stream_unicode_safe(sys.stdout))
     ch.setLevel(getattr(logging, cfg.log.level.upper(), logging.INFO))
     ch.setFormatter(logging.Formatter(_CONSOLE_FMT))
     root.addHandler(ch)

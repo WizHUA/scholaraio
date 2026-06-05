@@ -586,9 +586,20 @@ def _check_mineru(cfg: Config, lang: Lang) -> tuple[bool, str]:
     return status.ok, status.detail
 
 
+def _find_mineru_open_api() -> str | None:
+    """Return the MinerU Open API executable or installed module location."""
+    cli_path = shutil.which("mineru-open-api")
+    if cli_path:
+        return cli_path
+    spec = importlib.util.find_spec("mineru_open_api")
+    if spec is None:
+        return None
+    return spec.origin or "mineru_open_api"
+
+
 def _detect_mineru(cfg: Config, lang: Lang) -> MinerUStatus:
     """Collect MinerU status for both diagnostics and recommendation logic."""
-    cli_path = shutil.which("mineru-open-api")
+    cli_path = _find_mineru_open_api()
     token_configured = bool(cfg.resolved_mineru_api_key())
 
     try:

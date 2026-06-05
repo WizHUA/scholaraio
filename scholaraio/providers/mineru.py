@@ -608,6 +608,22 @@ CLOUD_API_URL = "https://mineru.net/api/v4"
 MINERU_OPEN_API_BIN = "mineru-open-api"
 
 
+def _find_mineru_open_api_cli() -> str | None:
+    """Locate mineru-open-api from PATH or the active Python environment."""
+    cli_path = shutil.which(MINERU_OPEN_API_BIN)
+    if cli_path:
+        return cli_path
+
+    scripts_dir = Path(sys.executable).parent
+    candidates = [scripts_dir / MINERU_OPEN_API_BIN]
+    if os.name == "nt":
+        candidates.append(scripts_dir / f"{MINERU_OPEN_API_BIN}.exe")
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
 def _cloud_cli_retry_attempts(opts: ConvertOptions) -> int:
     """Return the number of CLI attempts for MinerU cloud extraction."""
     return max(1, int(opts.upload_retries or DEFAULT_UPLOAD_RETRIES))
@@ -727,7 +743,7 @@ def convert_pdf_cloud(
     if not validation.ok:
         return _validation_failure_result(pdf_path, validation, t0)
 
-    cli_path = shutil.which(MINERU_OPEN_API_BIN)
+    cli_path = _find_mineru_open_api_cli()
     if not cli_path:
         result.error = (
             "未找到 mineru-open-api CLI，请先安装：`pip install mineru-open-api`，"
