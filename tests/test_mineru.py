@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import shutil
 import subprocess
 import sys
@@ -436,13 +437,13 @@ def test_convert_pdf_namespaces_returned_images_by_pdf_stem(tmp_path, monkeypatc
 def test_find_mineru_open_api_cli_checks_active_python_environment(tmp_path, monkeypatch):
     import scholaraio.providers.mineru as mineru
 
-    scripts_dir = tmp_path / "Scripts"
+    scripts_dir = tmp_path / ("Scripts" if os.name == "nt" else "bin")
     scripts_dir.mkdir()
-    cli = scripts_dir / "mineru-open-api.exe"
+    cli = scripts_dir / ("mineru-open-api.exe" if os.name == "nt" else "mineru-open-api")
     cli.write_text("", encoding="utf-8")
 
     monkeypatch.setattr(shutil, "which", lambda _name: None)
-    monkeypatch.setattr(sys, "executable", str(scripts_dir / "python.exe"))
+    monkeypatch.setattr(sys, "executable", str(scripts_dir / ("python.exe" if os.name == "nt" else "python")))
 
     assert mineru._find_mineru_open_api_cli() == str(cli)
 
